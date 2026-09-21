@@ -6,11 +6,14 @@ Bangladesh-focused invoice generator built with Next.js, shadcn/ui, Tailwind CSS
 
 - Responsive guest invoice editor with live A4 portrait preview
 - BDT whole-number calculations and fixed/percentage discounts
+- Authenticated incomplete-draft autosave with optimistic version conflicts
+- Invoice history search, status/date/amount filters, and sorting
 - English interface with Bangla-capable text entry
 - Responsive desktop/tablet/mobile line-item editing
 - Browser-side PDF and image-based DOCX exports from the live preview; production/server-side renderer hardening remains
 - Supabase browser/server client boundaries
 - Initial PostgreSQL/RLS migration in `supabase/migrations/0001_invoice_foundation.sql`
+- Unapplied lifecycle hardening migration in `supabase/migrations/0002_harden_invoice_lifecycle.sql`; review and apply only after selecting the correct Supabase project
 - Invite-aware login, signup, password reset, and OAuth callback screens
 
 See [`docs/plans/2026-09-21-invoice-generator-plan.md`](docs/plans/2026-09-21-invoice-generator-plan.md) for the validated implementation plan.

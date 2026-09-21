@@ -82,7 +82,7 @@ export default function Home() {
   const incomplete = !sellerCompanyName.trim() || !sellerName.trim() || !buyerCompanyName.trim() || !buyerName.trim() || lines.length === 0 || lines.some((line) => !line.description.trim() || line.quantity === "" || Number(line.quantity) < 1 || line.unitPrice === "" || Number(line.unitPrice) < 0)
 
   useEffect(() => {
-    if (!accountEmail || incomplete || !issueDate || !dueDate) return
+    if (!accountEmail || !issueDate || !dueDate) return
     let active = true
 
     const timeout = window.setTimeout(async () => {
