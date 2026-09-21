@@ -22,5 +22,5 @@ export function SignOutButton() {
     router.refresh()
   }
 
-  return <Button variant="outline" size="sm" type="button" disabled={loading} onClick={() => void signOut}><LogOut data-icon="inline-start" />{loading ? "Signing out…" : "Sign out"}</Button>
+  return <Button className="min-h-10 w-full justify-start md:w-auto md:min-h-7" variant="outline" size="sm" type="button" disabled={loading} onClick={() => void signOut}><LogOut data-icon="inline-start" />{loading ? "Signing out…" : "Sign out"}</Button>
 }

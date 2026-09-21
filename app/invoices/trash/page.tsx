@@ -1,11 +1,11 @@
 "use client"
 
-import Link from "next/link"
+
 import { useEffect, useState } from "react"
-import { ArrowLeft, RotateCcw, Trash2 } from "lucide-react"
-import { BrandLogo } from "@/components/brand-logo"
-import { SignOutButton } from "@/components/sign-out-button"
-import { buttonVariants } from "@/components/ui/button"
+import { RotateCcw, Trash2 } from "lucide-react"
+
+import { WorkspaceHeader } from "@/components/workspace-header"
+
 
 type TrashedInvoice = {
   id: string
@@ -69,12 +69,7 @@ export default function InvoiceTrashPage() {
   }
 
   return <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
-    <header className="border-b border-slate-200/80 bg-white">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-        <Link className="flex items-center gap-2 text-sm font-semibold" href="/invoices"><ArrowLeft size={16} /><BrandLogo /></Link>
-        <div className="flex items-center gap-2"><Link className={buttonVariants()} href="/"><span aria-hidden="true">＋</span>New invoice</Link><SignOutButton /></div>
-      </div>
-    </header>
+    <WorkspaceHeader backHref="/invoices" showTrash={false} />
 
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <div className="mb-7">
@@ -93,7 +88,7 @@ export default function InvoiceTrashPage() {
           <div><p className="text-sm">{invoice.customer_snapshot?.companyName || "Customer company"}</p><p className="text-xs text-slate-500">{invoice.customer_snapshot?.name || "Customer name"}</p></div>
           <p className="hidden text-sm text-slate-600 md:block">{date(invoice.issue_date)}</p>
           <p className="text-right text-sm font-semibold">{money(invoice.total_amount)}</p>
-          <div className="flex flex-wrap justify-end gap-3"><button className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void action(invoice, "restore")}><RotateCcw size={13} />Restore</button><button className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 underline-offset-4 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void action(invoice, "permanently_delete")}><Trash2 size={13} />Delete permanently</button></div>
+          <div className="flex flex-wrap justify-end gap-3"><button className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-slate-700 underline-offset-4 hover:bg-slate-50 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void action(invoice, "restore")}><RotateCcw size={13} />Restore</button><button className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-rose-600 underline-offset-4 hover:bg-rose-50 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void action(invoice, "permanently_delete")}><Trash2 size={13} />Delete permanently</button></div>
         </div>)}
       </div>}
     </div>

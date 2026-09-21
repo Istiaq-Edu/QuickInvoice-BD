@@ -1,11 +1,11 @@
 "use client"
 
 import Image from "next/image"
-import Link from "next/link"
+
 import { FormEvent, useEffect, useState } from "react"
-import { ArrowLeft, CheckCircle2, UserRound } from "lucide-react"
-import { BrandLogo } from "@/components/brand-logo"
-import { SignOutButton } from "@/components/sign-out-button"
+import { CheckCircle2, UserRound } from "lucide-react"
+
+import { WorkspaceHeader } from "@/components/workspace-header"
 import { Button } from "@/components/ui/button"
 
 type SellerLogo = { id: string; url: string | null; mimeType: string; byteSize: number }
@@ -104,12 +104,7 @@ export default function AccountSettingsPage() {
   }
 
   return <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
-    <header className="border-b border-slate-200/80 bg-white">
-      <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-4 sm:px-6">
-        <Link className="flex items-center gap-2 text-sm font-semibold" href="/invoices"><ArrowLeft size={16} /><BrandLogo /></Link>
-        <div className="flex items-center gap-2"><Link className="text-sm font-medium text-slate-600 hover:text-slate-950" href="/">New invoice</Link><SignOutButton /></div>
-      </div>
-    </header>
+    <WorkspaceHeader backHref="/invoices" />
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <div className="mb-7"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Account</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Seller profile</h1><p className="mt-2 text-sm text-slate-500">Save your business details once and reuse them on future invoices.</p></div>
       {loading && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading seller profile…</div>}
