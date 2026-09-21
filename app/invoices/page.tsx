@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { ArrowLeft, FileText, Plus, RotateCcw, Search, SlidersHorizontal } from "lucide-react"
+import { BrandLogo } from "@/components/brand-logo"
 import { buttonVariants } from "@/components/ui/button"
 
 type InvoiceRecord = {
@@ -93,7 +94,7 @@ export default function InvoiceHistoryPage() {
   return <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
     <header className="border-b border-slate-200/80 bg-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-        <Link className="flex items-center gap-2 text-sm font-semibold" href="/"><ArrowLeft size={16} />Invoice Studio</Link>
+        <Link className="flex items-center gap-2 text-sm font-semibold" href="/"><ArrowLeft size={16} /><BrandLogo /></Link>
         <Link className={buttonVariants()} href="/"><Plus data-icon="inline-start" />New invoice</Link>
       </div>
     </header>

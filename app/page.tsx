@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { FileDown, Plus, RotateCcw, Trash2, UserRound } from "lucide-react"
+import { BrandLogo } from "@/components/brand-logo"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { exportPreviewAsDocx, exportPreviewAsPdf } from "@/lib/invoice/export"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -162,7 +163,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
       <header className="border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between px-4 py-4 sm:px-6 lg:px-10">
-          <div className="flex items-center gap-3"><div className="flex size-10 items-center justify-center rounded-xl bg-slate-950 text-lg font-bold text-white">৳</div><div><p className="text-sm font-semibold tracking-tight">Invoice Studio</p><p className="text-xs text-slate-500">Simple invoices for Bangladesh</p></div></div>
+          <BrandLogo />
           {accountEmail ? <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices"><UserRound data-icon="inline-start" />View history</Link> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}><UserRound data-icon="inline-start" />Sign in to save</Button>}
         </div>
       </header>
