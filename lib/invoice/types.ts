@@ -2,6 +2,14 @@ export type DiscountType = "none" | "fixed" | "percentage"
 export type PaymentStatus = "unpaid" | "paid" | "overdue"
 export type InvoiceLifecycle = "draft" | "finalized" | "trashed"
 
+export type TemplateSettings = {
+  accent: "slate" | "blue" | "emerald" | "indigo"
+  showAddresses: boolean
+  showSellerContact: boolean
+  showBuyerContact: boolean
+  showNotes: boolean
+}
+
 export type InvoiceLine = {
   id?: string
   description: string
@@ -26,6 +34,7 @@ export type InvoiceDraft = {
   discountType: DiscountType
   discountValue: number
   paymentStatus: PaymentStatus
+  templateSettings?: TemplateSettings
   notes?: string
   paymentTerms?: string
   lines: InvoiceLine[]

@@ -2,8 +2,10 @@
 
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
-import { ArrowLeft, FileText, Plus, RotateCcw, Search, SlidersHorizontal } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ArrowLeft, FileDown, FileText, Plus, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react"
 import { BrandLogo } from "@/components/brand-logo"
+import { SignOutButton } from "@/components/sign-out-button"
 import { buttonVariants } from "@/components/ui/button"
 
 type InvoiceRecord = {
@@ -29,6 +31,8 @@ type Filters = {
   maxTotal: string
 }
 
+type Action = "revise" | "payment_status" | "trash"
+
 const defaultFilters: Filters = {
   q: "",
   paymentStatus: "all",
@@ -48,10 +52,13 @@ const date = (value: string) => {
 }
 
 export default function InvoiceHistoryPage() {
+  const router = useRouter()
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
   const [filters, setFilters] = useState<Filters>(defaultFilters)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [actionError, setActionError] = useState("")
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
 
   const queryString = useMemo(() => {
@@ -64,7 +71,6 @@ export default function InvoiceHistoryPage() {
 
   useEffect(() => {
     const controller = new AbortController()
-
     fetch(`/api/invoices${queryString ? `?${queryString}` : ""}`, { signal: controller.signal }).then(async (response) => {
       const result = await response.json() as { invoices?: InvoiceRecord[]; error?: string }
       if (!response.ok) throw new Error(result.error ?? "Invoice history could not be loaded.")
@@ -89,13 +95,44 @@ export default function InvoiceHistoryPage() {
     setError("")
     setFilters(defaultFilters)
   }
+  const performAction = async (invoice: InvoiceRecord, action: Action, paymentStatus?: InvoiceRecord["payment_status"]) => {
+    if (action === "revise" && !window.confirm("Create a new draft from this finalized invoice? The original invoice will stay unchanged.")) return
+    if (action === "trash" && !window.confirm("Move this invoice to Trash? You can restore it later.")) return
+
+    setBusyId(invoice.id)
+    setActionError("")
+    try {
+      const response = await fetch("/api/invoices/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, invoiceId: invoice.id, paymentStatus }),
+      })
+      const result = await response.json() as { id?: string; error?: string }
+      if (!response.ok) throw new Error(result.error ?? "Invoice action could not be completed.")
+      if (action === "revise" && result.id) {
+        router.push(`/?draft=${encodeURIComponent(result.id)}`)
+        return
+      }
+      setRetry((value) => value + 1)
+    } catch (requestError: unknown) {
+      setActionError(requestError instanceof Error ? requestError.message : "Invoice action could not be completed.")
+    } finally {
+      setBusyId(null)
+    }
+  }
   const hasFilters = queryString.length > 0
 
   return <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
     <header className="border-b border-slate-200/80 bg-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
         <Link className="flex items-center gap-2 text-sm font-semibold" href="/"><ArrowLeft size={16} /><BrandLogo /></Link>
-        <Link className={buttonVariants()} href="/"><Plus data-icon="inline-start" />New invoice</Link>
+        <div className="flex items-center gap-2">
+          <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/customers">Customers</Link>
+          <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/account/settings">Seller profile</Link>
+          <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices/trash"><Trash2 data-icon="inline-start" />Trash</Link>
+          <Link className={buttonVariants()} href="/"><Plus data-icon="inline-start" />New invoice</Link>
+          <SignOutButton />
+        </div>
       </div>
     </header>
 
@@ -104,7 +141,7 @@ export default function InvoiceHistoryPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workspace</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Invoice history</h1>
-          <p className="mt-2 text-sm text-slate-500">Search, filter, and sort your saved drafts and finalized invoices.</p>
+          <p className="mt-2 text-sm text-slate-500">Search, filter, sort, and manage your saved drafts and finalized invoices.</p>
         </div>
         {hasFilters && <button className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50" type="button" onClick={resetFilters}><RotateCcw size={15} />Clear filters</button>}
       </div>
@@ -122,7 +159,7 @@ export default function InvoiceHistoryPage() {
           <label className="block"><span className="mb-2 block text-xs font-medium text-slate-600">Due date from</span><input className="field" type="date" value={filters.dueFrom} onChange={(event) => updateFilter("dueFrom", event.target.value)} /></label>
           <label className="block"><span className="mb-2 block text-xs font-medium text-slate-600">Due date to</span><input className="field" type="date" value={filters.dueTo} onChange={(event) => updateFilter("dueTo", event.target.value)} /></label>
         </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 sm:max-w-md">
+        <div className="mt-4 grid max-w-md gap-4 sm:grid-cols-2">
           <label className="block"><span className="mb-2 block text-xs font-medium text-slate-600">Minimum total</span><input className="field" type="number" min={0} step={1} placeholder="৳0" value={filters.minTotal} onChange={(event) => updateFilter("minTotal", event.target.value)} /></label>
           <label className="block"><span className="mb-2 block text-xs font-medium text-slate-600">Maximum total</span><input className="field" type="number" min={0} step={1} placeholder="No limit" value={filters.maxTotal} onChange={(event) => updateFilter("maxTotal", event.target.value)} /></label>
         </div>
@@ -130,12 +167,23 @@ export default function InvoiceHistoryPage() {
 
       {loading && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading invoice history…</div>}
       {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700"><p>{error}</p><button className="mt-3 inline-flex h-9 items-center rounded-lg border border-rose-300 bg-white px-3 font-medium text-rose-700" type="button" onClick={() => { setLoading(true); setError(""); setRetry((value) => value + 1) }}>Try again</button></div>}
+      {actionError && <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">{actionError}</div>}
       {!loading && !error && invoices.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center"><FileText className="mx-auto text-slate-400" /><h2 className="mt-4 font-semibold">{hasFilters ? "No invoices match these filters" : "No saved invoices yet"}</h2><p className="mt-2 text-sm text-slate-500">{hasFilters ? "Try broadening your search or clearing one of the filters." : "Create your first invoice to start your history."}</p>{hasFilters ? <button className="mt-5 inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium shadow-sm" type="button" onClick={resetFilters}>Clear filters</button> : <Link className={`${buttonVariants()} mt-5`} href="/"><Plus data-icon="inline-start" />Create invoice</Link>}</div>}
       {!loading && !error && invoices.length > 0 && <>
         <p className="mb-3 text-xs text-slate-500">{invoices.length} {invoices.length === 1 ? "invoice" : "invoices"}</p>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="hidden grid-cols-[1fr_1.4fr_150px_150px_130px] gap-4 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid"><span>Invoice</span><span>Customer</span><span>Issue date</span><span>Status</span><span className="text-right">Total</span></div>
-          {invoices.map((invoice) => <div key={invoice.id} className="grid gap-3 border-t border-slate-100 px-5 py-4 first:border-t-0 md:grid-cols-[1fr_1.4fr_150px_150px_130px] md:items-center md:gap-4"><div><p className="text-sm font-semibold">{invoice.invoice_number ?? "Draft"}</p><p className="text-xs text-slate-500 md:hidden">{date(invoice.issue_date)}</p></div><div><p className="text-sm">{invoice.customer_snapshot?.companyName || "Customer company"}</p><p className="text-xs text-slate-500">{invoice.customer_snapshot?.name || "Customer name"}</p></div><p className="hidden text-sm text-slate-600 md:block">{date(invoice.issue_date)}</p><div><span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium capitalize text-slate-600">{invoice.lifecycle_status === "draft" ? "Draft" : invoice.payment_status}</span></div><p className="text-right text-sm font-semibold">{money(invoice.total_amount)}</p></div>)}
+          <div className="hidden grid-cols-[1fr_1.3fr_125px_140px_115px_180px] gap-4 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid"><span>Invoice</span><span>Customer</span><span>Issue date</span><span>Status</span><span className="text-right">Total</span><span className="text-right">Actions</span></div>
+          {invoices.map((invoice) => <div key={invoice.id} className="grid gap-3 border-t border-slate-100 px-5 py-4 first:border-t-0 md:grid-cols-[1fr_1.3fr_125px_140px_115px_180px] md:items-center md:gap-4">
+            <div><p className="text-sm font-semibold">{invoice.invoice_number ?? "Draft"}</p><p className="text-xs text-slate-500 md:hidden">{date(invoice.issue_date)}</p></div>
+            <div><p className="text-sm">{invoice.customer_snapshot?.companyName || "Customer company"}</p><p className="text-xs text-slate-500">{invoice.customer_snapshot?.name || "Customer name"}</p></div>
+            <p className="hidden text-sm text-slate-600 md:block">{date(invoice.issue_date)}</p>
+            <div>{invoice.lifecycle_status === "draft" ? <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">Draft</span> : <select className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium capitalize text-slate-700" value={invoice.payment_status} disabled={busyId === invoice.id} onChange={(event) => void performAction(invoice, "payment_status", event.target.value as InvoiceRecord["payment_status"])}><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="overdue">Overdue</option></select>}</div>
+            <p className="text-right text-sm font-semibold">{money(invoice.total_amount)}</p>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {invoice.lifecycle_status === "draft" ? <Link className="text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" href={`/?draft=${encodeURIComponent(invoice.id)}`}>Open draft</Link> : <><Link className="text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" href={`/?draft=${encodeURIComponent(invoice.id)}`}>Edit</Link><Link className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" href={`/?draft=${encodeURIComponent(invoice.id)}&download=PDF`}><FileDown size={12} />PDF</Link><Link className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" href={`/?draft=${encodeURIComponent(invoice.id)}&download=DOCX`}><FileDown size={12} />DOCX</Link><button className="text-xs font-semibold text-slate-700 underline-offset-4 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void performAction(invoice, "revise")}>Revise</button></>}
+              <button className="text-xs font-semibold text-rose-600 underline-offset-4 hover:underline" type="button" disabled={busyId === invoice.id} onClick={() => void performAction(invoice, "trash")}>Move to Trash</button>
+            </div>
+          </div>)}
         </div>
       </>}
     </div>

@@ -7,6 +7,7 @@ const paymentStatuses = new Set(["unpaid", "paid", "overdue"])
 export async function GET(request: Request) {
   const searchParams = new URL(request.url).searchParams
   const query = searchParams.get("q")?.trim().toLowerCase() ?? ""
+  const view = searchParams.get("view") ?? "active"
   const paymentStatus = searchParams.get("paymentStatus") ?? "all"
   const sort = searchParams.get("sort") ?? "newest"
   const issueFrom = searchParams.get("issueFrom") ?? ""
@@ -19,6 +20,7 @@ export async function GET(request: Request) {
   const maxTotal = maxTotalInput ? Number(maxTotalInput) : null
   const dateFilters = [issueFrom, issueTo, dueFrom, dueTo].filter(Boolean)
 
+  if (!new Set(["active", "trash"]).has(view)) return NextResponse.json({ error: "Invoice view is invalid." }, { status: 400 })
   if (paymentStatus !== "all" && !paymentStatuses.has(paymentStatus)) {
     return NextResponse.json({ error: "Payment status filter is invalid." }, { status: 400 })
   }
@@ -38,8 +40,9 @@ export async function GET(request: Request) {
   let invoiceQuery = supabase
     .from("invoices")
     .select("id, invoice_number, lifecycle_status, issue_date, due_date, payment_status, total_amount, updated_at, customer_snapshot")
-    .neq("lifecycle_status", "trashed")
 
+  if (view === "trash") invoiceQuery = invoiceQuery.eq("lifecycle_status", "trashed")
+  else invoiceQuery = invoiceQuery.neq("lifecycle_status", "trashed")
   if (paymentStatus !== "all") invoiceQuery = invoiceQuery.eq("payment_status", paymentStatus)
   if (issueFrom) invoiceQuery = invoiceQuery.gte("issue_date", issueFrom)
   if (issueTo) invoiceQuery = invoiceQuery.lte("issue_date", issueTo)

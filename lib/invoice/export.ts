@@ -46,7 +46,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export async function exportPreviewAsPdf(element: HTMLElement) {
+export async function exportPreviewAsPdf(element: HTMLElement, filename = "invoice-draft.pdf") {
   const source = await captureElement(element)
   const pages = splitPages(source)
   const pdf = new jsPDF({ format: "a4", orientation: "portrait", unit: "pt" })
@@ -57,10 +57,10 @@ export async function exportPreviewAsPdf(element: HTMLElement) {
     pdf.addImage(page.toDataURL("image/png"), "PNG", 0, 0, A4_WIDTH_PT, pageHeight, undefined, "FAST")
   })
 
-  pdf.save("invoice-draft.pdf")
+  pdf.save(filename)
 }
 
-export async function exportPreviewAsDocx(element: HTMLElement) {
+export async function exportPreviewAsDocx(element: HTMLElement, filename = "invoice-draft.docx") {
   const source = await captureElement(element)
   const pages = splitPages(source)
   const children = await Promise.all(pages.map(async (page, index) => {
@@ -74,5 +74,5 @@ export async function exportPreviewAsDocx(element: HTMLElement) {
   }))
 
   const document = new Document({ sections: [{ children }] })
-  downloadBlob(await Packer.toBlob(document), "invoice-draft.docx")
+  downloadBlob(await Packer.toBlob(document), filename)
 }

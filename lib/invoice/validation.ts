@@ -3,6 +3,13 @@ import type { InvoiceDraft, InvoiceTotals } from "./types"
 
 const integerAmount = z.number().int().nonnegative()
 const optionalText = z.string().trim().max(10_000).optional().default("")
+export const templateSettingsSchema = z.object({
+  accent: z.enum(["slate", "blue", "emerald", "indigo"]),
+  showAddresses: z.boolean(),
+  showSellerContact: z.boolean(),
+  showBuyerContact: z.boolean(),
+  showNotes: z.boolean(),
+})
 
 export const invoiceLineSchema = z.object({
   id: z.string().optional(),
@@ -20,13 +27,14 @@ const invoiceCommonFields = {
   buyerCompanyName: z.string().trim().max(500).default(""),
   buyerName: z.string().trim().max(500).default(""),
   buyerEmail: z.string().trim().email().or(z.literal("")).default(""),
-  buyerPhone: z.string().trim().max(100).default(""),
+  buyerPhone: z.string().trim().min(1, "Buyer phone is required").max(100),
   buyerWebsite: z.string().trim().url().or(z.literal("")).default(""),
   buyerAddress: z.string().trim().max(2_000).default(""),
   issueDate: z.string().date(),
   dueDate: z.string().date(),
   discountType: z.enum(["none", "fixed", "percentage"]),
   paymentStatus: z.enum(["unpaid", "paid", "overdue"]),
+  templateSettings: templateSettingsSchema.optional(),
   notes: optionalText,
   paymentTerms: optionalText,
 }

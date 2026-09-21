@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { calculateTotals, invoiceDraftSaveSchema } from "@/lib/invoice/validation"
+import { syncCustomer } from "@/lib/invoice/customer-sync"
 import type { InvoiceDraft } from "@/lib/invoice/types"
 
 export async function POST(request: Request) {
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
       line_total: line.quantity * line.unitPrice,
     })))
     if (lineError) return NextResponse.json({ error: "Draft lines could not be saved." }, { status: 500 })
+    await syncCustomer(supabase, profile.workspace_id, invoice)
     return NextResponse.json({ id: data.id, version: data.version })
   }
 
@@ -113,6 +115,7 @@ export async function POST(request: Request) {
     line_total: line.quantity * line.unitPrice,
   })))
   if (lineError) return NextResponse.json({ error: "Draft lines could not be saved." }, { status: 500 })
+  await syncCustomer(supabase, profile.workspace_id, invoice)
 
   return NextResponse.json({ id: data.id, version: data.version }, { status: 201 })
 }
