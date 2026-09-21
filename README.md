@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Invoice Studio
 
-## Getting Started
+Bangladesh-focused invoice generator built with Next.js, shadcn/ui, Tailwind CSS, and Supabase.
 
-First, run the development server:
+## Current implementation
+
+- Responsive guest invoice editor with live A4 portrait preview
+- BDT whole-number calculations and fixed/percentage discounts
+- English interface with Bangla-capable text entry
+- Responsive desktop/tablet/mobile line-item editing
+- Browser-side PDF and image-based DOCX exports from the live preview; production/server-side renderer hardening remains
+- Supabase browser/server client boundaries
+- Initial PostgreSQL/RLS migration in `supabase/migrations/0001_invoice_foundation.sql`
+- Invite-aware login, signup, password reset, and OAuth callback screens
+
+See [`docs/plans/2026-09-21-invoice-generator-plan.md`](docs/plans/2026-09-21-invoice-generator-plan.md) for the validated implementation plan.
+
+## Local development
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The generator works without Supabase credentials. Auth and cloud persistence require:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` for future server-only admin/purge workflows
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Apply the migration to a private Singapore Supabase project before enabling beta accounts. Keep the service-role key server-only and do not commit `.env.local`.
 
-## Learn More
+## Validation
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm run build
+```

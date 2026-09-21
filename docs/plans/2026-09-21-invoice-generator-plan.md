@@ -43,11 +43,13 @@ The first release is intentionally small: approximately 2â€“3 beta accounts, 2â€
 
 - One seller profile per account.
 - Seller name is required before finalization/export.
+- Seller company name is the primary heading, with seller name displayed directly beneath it. Both are required.
 - Seller address is one free-form field.
 - Seller email, phone, and website are optional.
 - One private logo per seller: PNG, JPEG, or WebP, maximum 2 MB.
 - A customer directory is available to signed-in users.
 - Buyer name is required; buyer address, email, phone, and website are optional.
+- Buyer company name is the primary heading, with buyer name displayed directly beneath it. Both are required.
 - Buyer address is one free-form field.
 - A new buyer entered on an invoice is automatically saved to the directory.
 - Editing a selected customer while creating an invoice updates the customer record and the current invoice snapshot.
