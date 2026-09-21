@@ -35,7 +35,28 @@ export default function SignupPage() {
     setLoading(false)
   }
 
-  return <main className="flex min-h-screen items-center justify-center bg-[#f7f8fa] px-4 py-10"><div className="w-full max-w-md"><Link className="mb-8 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-950" href="/"><ArrowLeft size={16} />Back to invoice</Link><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/50 sm:p-8"><div className="mb-8"><div className="mb-5 flex size-10 items-center justify-center rounded-xl bg-slate-950 text-lg font-bold text-white">৳</div><h1 className="text-2xl font-semibold tracking-tight">Join the private beta</h1><p className="mt-2 text-sm leading-6 text-slate-500">Create an account to save invoices and customers across devices.</p></div><form className="space-y-4" onSubmit={submit}><Field label="Email" type="email" value={email} onChange={setEmail} required /><Field label="Password" type="password" value={password} onChange={setPassword} required /><Field label="Confirm password" type="password" value={confirm} onChange={setConfirm} required /><Button className="h-11 w-full" type="submit" disabled={loading}>{loading ? "Creating account…" : "Create account"}</Button></form>{message && <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700" role="status">{message}</p>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">{error}</p>}<p className="mt-6 text-center text-xs text-slate-500">Already have an account? <Link className="font-medium text-slate-900 underline underline-offset-4" href="/auth/login">Sign in</Link></p></div></div></main>
+  const resendConfirmation = async () => {
+    const normalizedEmail = email.trim()
+    setError("")
+    setMessage("")
+    if (!normalizedEmail) {
+      setError("Enter your email address first.")
+      return
+    }
+    setLoading(true)
+    const supabase = createSupabaseBrowserClient()
+    if (!supabase) {
+      setError("Supabase is not configured yet. Add the values from .env.example to enable account creation.")
+      setLoading(false)
+      return
+    }
+    const result = await supabase.auth.resend({ type: "signup", email: normalizedEmail, options: { emailRedirectTo: `${window.location.origin}/auth/callback` } })
+    if (result.error) setError(result.error.message)
+    else setMessage("A new confirmation email was sent. Use the newest email and ignore older links.")
+    setLoading(false)
+  }
+
+  return <main className="flex min-h-screen items-center justify-center bg-[#f7f8fa] px-4 py-10"><div className="w-full max-w-md"><Link className="mb-8 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-950" href="/"><ArrowLeft size={16} />Back to invoice</Link><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/50 sm:p-8"><div className="mb-8"><div className="mb-5 flex size-10 items-center justify-center rounded-xl bg-slate-950 text-lg font-bold text-white">৳</div><h1 className="text-2xl font-semibold tracking-tight">Join the private beta</h1><p className="mt-2 text-sm leading-6 text-slate-500">Create an account to save invoices and customers across devices.</p></div><form className="space-y-4" onSubmit={submit}><Field label="Email" type="email" value={email} onChange={setEmail} required /><Field label="Password" type="password" value={password} onChange={setPassword} required /><Field label="Confirm password" type="password" value={confirm} onChange={setConfirm} required /><Button className="h-11 w-full" type="submit" disabled={loading}>{loading ? "Creating account…" : "Create account"}</Button></form>{message && <div className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700"><p role="status">{message}</p><button className="mt-2 font-medium underline underline-offset-2" type="button" onClick={resendConfirmation} disabled={loading}>Resend confirmation email</button></div>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">{error}</p>}<p className="mt-6 text-center text-xs text-slate-500">Already have an account? <Link className="font-medium text-slate-900 underline underline-offset-4" href="/auth/login">Sign in</Link></p></div></div></main>
 }
 
 function Field({ label, type, value, onChange, required }: { label: string; type: string; value: string; onChange: (value: string) => void; required?: boolean }) { return <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">{label}{required && <span className="ml-1 text-rose-500">*</span>}</span><input className="field" type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} /></label> }
