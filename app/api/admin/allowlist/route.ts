@@ -21,16 +21,14 @@ async function getAdminContext(): Promise<{ context: AdminContext } | { error: N
     return { error: NextResponse.json({ error: "Authentication is required." }, { status: 401 }) }
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("is_admin, status")
-    .eq("user_id", authData.user.id)
-    .maybeSingle()
+  // Single source of truth: the database function also requires an active
+  // workspace, which a profiles-only check would miss.
+  const { data: isAdmin, error: adminError } = await supabase.rpc("current_profile_is_admin")
 
-  if (profileError) {
+  if (adminError) {
     return { error: NextResponse.json({ error: "Administrator status could not be checked." }, { status: 500 }) }
   }
-  if (!profile?.is_admin || profile.status !== "active") {
+  if (isAdmin !== true) {
     return { error: NextResponse.json({ error: "Administrator access is required." }, { status: 403 }) }
   }
 

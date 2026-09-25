@@ -11,13 +11,11 @@ export default async function AdminAllowlistPage() {
   const { data: authData } = await supabase.auth.getUser()
   if (!authData.user) redirect("/auth/login")
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("is_admin, status")
-    .eq("user_id", authData.user.id)
-    .maybeSingle()
+  // Single source of truth: the database function also requires an active
+  // workspace, which a profiles-only check would miss.
+  const { data: isAdmin } = await supabase.rpc("current_profile_is_admin")
 
-  if (!profile?.is_admin || profile.status !== "active") redirect("/")
+  if (isAdmin !== true) redirect("/")
 
   return <AllowlistManager currentEmail={authData.user.email ?? ""} />
 }

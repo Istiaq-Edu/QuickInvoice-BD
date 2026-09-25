@@ -12,18 +12,14 @@ export async function GET() {
     return NextResponse.json({ error: "Authentication is required." }, { status: 401 })
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("is_admin, status")
-    .eq("user_id", authData.user.id)
-    .maybeSingle()
+  // Delegate to the database definition so this flag can never drift from the
+  // RLS policies. The function requires an active profile *and* an active
+  // workspace; the previous inline check inspected only profiles.status.
+  const { data: isAdmin, error: adminError } = await supabase.rpc("current_profile_is_admin")
 
-  if (profileError) {
+  if (adminError) {
     return NextResponse.json({ error: "Profile could not be loaded." }, { status: 500 })
   }
 
-  return NextResponse.json(
-    { isAdmin: profile?.is_admin === true && profile.status === "active" },
-    { headers: { "cache-control": "no-store" } },
-  )
+  return NextResponse.json({ isAdmin: isAdmin === true }, { headers: { "cache-control": "no-store" } })
 }
