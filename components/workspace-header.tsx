@@ -1,10 +1,13 @@
+"use client"
+
 import Link from "next/link"
-import { ArrowLeft, Menu, Plus, Trash2 } from "lucide-react"
+import { ArrowLeft, Menu, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 import { SignOutButton } from "@/components/sign-out-button"
 import { buttonVariants } from "@/components/ui/button"
 
-type WorkspaceSection = "invoices" | "customers" | "profile" | "trash"
+type WorkspaceSection = "invoices" | "customers" | "profile" | "admin" | "trash"
 
 export function WorkspaceHeader({
   backHref,
@@ -15,10 +18,12 @@ export function WorkspaceHeader({
   active?: WorkspaceSection
   showTrash?: boolean
 }) {
+  const isAdmin = useAdminStatus()
   const links = [
     { href: "/invoices", label: "Invoices", section: "invoices" as const },
     { href: "/customers", label: "Customers", section: "customers" as const },
     { href: "/account/settings", label: "Seller profile", section: "profile" as const },
+    ...(isAdmin ? [{ href: "/admin/allowlist", label: "Admin", section: "admin" as const, icon: <ShieldCheck data-icon="inline-start" /> }] : []),
     ...(showTrash ? [{ href: "/invoices/trash", label: "Trash", section: "trash" as const, icon: <Trash2 data-icon="inline-start" /> }] : []),
   ]
 

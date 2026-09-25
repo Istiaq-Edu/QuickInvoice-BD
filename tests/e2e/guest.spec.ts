@@ -77,6 +77,17 @@ test.describe("guest invoice generator", () => {
     await expect(page.getByRole("button", { name: "Sign in to use saved customers" })).toBeVisible()
   })
 
+  test("hides admin navigation and role lookup from guests", async ({ page }) => {
+    const profileResponse = await page.request.get("/api/profile")
+    expect(profileResponse.status()).toBe(401)
+
+    await page.goto("/")
+    await expect(page.getByRole("link", { name: "Admin", exact: true })).toHaveCount(0)
+
+    await page.goto("/invoices")
+    await expect(page.getByRole("navigation", { name: "Workspace navigation" }).getByRole("link", { name: "Admin", exact: true })).toHaveCount(0)
+  })
+
   test("does not persist guest invoice state after reload", async ({ page }) => {
     await page.goto("/")
 

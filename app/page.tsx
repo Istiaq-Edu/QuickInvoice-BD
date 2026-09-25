@@ -4,7 +4,8 @@ import Image from "next/image"
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, FileDown, Plus, RotateCcw, Save, Trash2, Upload, UserRound, X } from "lucide-react"
+import { AlertTriangle, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, Upload, UserRound, X } from "lucide-react"
+import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 import { SignOutButton } from "@/components/sign-out-button"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -117,6 +118,7 @@ type AutosaveRequest = { invoice: AutosaveInvoice; update: boolean; generation: 
 
 export default function Home() {
   const router = useRouter()
+  const isAdmin = useAdminStatus()
   const previewRef = useRef<HTMLDivElement>(null)
   const nextLineId = useRef(2)
   const draftId = useRef<string | null>(null)
@@ -933,7 +935,7 @@ export default function Home() {
       <header className="glass-header sticky top-0 z-40">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8">
           <BrandLogo />
-          {!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <div className="flex items-center gap-2"><Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices"><UserRound data-icon="inline-start" />View history</Link><SignOutButton /></div> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}><UserRound data-icon="inline-start" /><span className="sm:hidden">Sign in</span><span className="hidden sm:inline">Sign in to save</span></Button>}
+          {!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <div className="flex items-center gap-2">{isAdmin && <Link className={`${buttonVariants({ variant: "outline", size: "sm" })} hidden sm:inline-flex`} href="/admin/allowlist"><ShieldCheck data-icon="inline-start" />Admin</Link>}<Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices"><UserRound data-icon="inline-start" />View history</Link><SignOutButton /></div> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}><UserRound data-icon="inline-start" /><span className="sm:hidden">Sign in</span><span className="hidden sm:inline">Sign in to save</span></Button>}
         </div>
       </header>
 
