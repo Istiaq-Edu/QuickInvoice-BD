@@ -108,9 +108,9 @@ Only run against a dedicated non-production test project with a test account and
 
 ### P1 — Deployment/configuration actions that code cannot complete
 
-- [ ] Configure Vercel server-only `SUPABASE_SERVICE_ROLE_KEY` — blocked because the service-role secret is not available in this workspace.
-- [ ] Configure a long random server-only `CRON_SECRET` — not configured yet.
-- [ ] Configure the scheduler to `POST /api/internal/purge` every 5–15 minutes with the cron secret — blocked until `CRON_SECRET` is configured.
+- [x] Configure Vercel server-only `SUPABASE_SERVICE_ROLE_KEY` — set for Production only, stored as a write-only sensitive variable.
+- [x] Configure a long random server-only `CRON_SECRET` — 48 random bytes, Base64 encoded; stored as a write-only sensitive variable.
+- [x] Configure the scheduler to run the purge worker — `vercel.json` registers a daily `0 3 * * *` cron against `/api/internal/purge`; the route was extended to accept `GET` because Vercel Cron issues GET rather than POST.
 - [x] Confirm the Vercel Preview environment contains `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `NEXT_PUBLIC_APP_URL`.
 - [ ] Enable Supabase Auth leaked-password protection in the Dashboard; this cannot be enabled through the migration. Advisor remediation: https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection
 - [x] Deploy a Vercel preview and check `/api/health` before production promotion; current preview is `https://invoice-8cci1ftug-istiaq-s-org.vercel.app` and health returned `status: ok`.

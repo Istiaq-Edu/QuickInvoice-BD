@@ -27,15 +27,17 @@ Set these as server-side environment variables in the hosting dashboard. Never p
 
 ## Cron setup
 
-Configure a server-side scheduler in the hosting/provider dashboard to send a `POST` request to:
+The purge worker is scheduled in this repository by `vercel.json`:
 
-```text
-https://<application-host>/api/internal/purge
+```json
+{ "crons": [{ "path": "/api/internal/purge", "schedule": "0 3 * * *" }] }
 ```
 
-Send the secret as either `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret: <CRON_SECRET>`. Run it frequently enough for the beta workload (for example, every 5–15 minutes). The worker claims a bounded batch, uses row locks so overlapping runs do not process the same job, retries failed jobs, and reclaims jobs left running for more than 15 minutes.
+This runs daily at 03:00 UTC. Vercel Cron issues a **GET** request and supplies the `Authorization: Bearer $CRON_SECRET` header automatically, so the route accepts both `GET` and `POST`. Confirm the schedule at **Project → Settings → Crons**; Vercel reads `vercel.json` at build time, so schedule changes require a redeploy.
 
-If the hosting dashboard does not provide outbound authenticated cron requests, use a managed scheduler that can send the same HTTP request. Do not call this route from the admin browser page and do not put `CRON_SECRET` in client JavaScript.
+The daily cadence is a consequence of the Vercel Hobby plan, which permits at most one cron invocation per day. The worker claims a bounded batch, uses row locks so overlapping runs do not process the same job, retries failed jobs, and reclaims jobs left running for more than 15 minutes — so a daily schedule is sufficient for the beta workload.
+
+The route also accepts a manual `POST` with the same header, which is useful for draining a queue without waiting for the next run. Never call this route from the admin browser page and never put `CRON_SECRET` in client JavaScript.
 
 ## Operating the allowlist
 

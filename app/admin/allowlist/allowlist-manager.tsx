@@ -154,9 +154,9 @@ export function AllowlistManager({ currentEmail }: { currentEmail: string }) {
         </div>}
       </section>
 
-      <aside className="rounded-lg border border-amber-400/25 bg-amber-500/10 p-5 text-sm leading-6 text-amber-950 sm:p-6">
-        <h2 className="font-semibold">Purge worker setup</h2>
-        <p className="mt-1">Purges are not run by the browser. Configure a server-side cron job to POST to <code className="rounded-lg border border-amber-400/30 bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs">/api/internal/purge</code> with <code className="rounded-lg border border-amber-400/30 bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs">Authorization: Bearer CRON_SECRET</code>. Keep both <code className="rounded-lg border border-amber-400/30 bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs">CRON_SECRET</code> and <code className="rounded-lg border border-amber-400/30 bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs">SUPABASE_SERVICE_ROLE_KEY</code> in server-only environment variables. Refresh this page to see the result.</p>
+      <aside className="rounded-lg border border-border bg-muted/60 p-5 text-sm leading-6 text-muted-foreground sm:p-6">
+        <h2 className="font-semibold text-foreground">How removal works</h2>
+        <p className="mt-1">Removing an entry disables that account immediately and queues its data for erasure. A server-side job runs daily and deletes the workspace data, private logo files, and the sign-in account. Purges never run in your browser, so closing this page will not cancel one. Use <span className="font-medium text-foreground">Refresh status</span> to follow a queued purge.</p>
       </aside>
     </div>
   </main>
