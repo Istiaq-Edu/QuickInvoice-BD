@@ -142,7 +142,7 @@ async function processJob(admin: NonNullable<ReturnType<typeof createSupabaseAdm
   if (error) throw new PurgeFailure("job_complete_failed")
 }
 
-export async function POST(request: Request) {
+async function handlePurgeRequest(request: Request) {
   const cronSecret = process.env.CRON_SECRET
   if (!cronSecret) {
     return NextResponse.json({ error: "Purge worker is not configured: set CRON_SECRET in the server environment." }, { status: 503 })
@@ -183,4 +183,14 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ claimed: (jobs ?? []).length, completed, failed: failures })
+}
+
+// Vercel Cron issues a GET request with `Authorization: Bearer $CRON_SECRET`, so
+// the worker must answer GET as well as the POST used for manual/retry runs.
+export async function GET(request: Request) {
+  return handlePurgeRequest(request)
+}
+
+export async function POST(request: Request) {
+  return handlePurgeRequest(request)
 }

@@ -72,7 +72,20 @@ Migrations are forward-only in production. Do not manually delete migration hist
 
 ## Account purge operations
 
-Purge requires both `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` as server-only variables. A scheduler should POST to `/api/internal/purge` with `Authorization: Bearer <CRON_SECRET>`. Never call the purge endpoint from browser code.
+Purge requires both `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` as server-only variables. Both are set to Production only on Vercel, and both must exist before the worker can run.
+
+**Scheduled runs.** `vercel.json` declares a daily cron at `0 3 * * *` (03:00 UTC) pointing at `/api/internal/purge`. Vercel Cron issues a **GET** request and sets `Authorization: Bearer $CRON_SECRET` automatically, so the route exports both `GET` and `POST` against the same handler. Because Vercel only reads the cron definition at build time, changing `vercel.json` requires a redeploy to take effect.
+
+**Manual runs and retries.** To process jobs without waiting for the schedule, send a POST with the secret from your own machine:
+
+```bash
+curl -X POST https://quickinvoice-bd.vercel.app/api/internal/purge \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Read the secret back out of the Vercel dashboard only when needed, and never commit it or paste it into an issue. Never call the purge endpoint from browser code.
+
+If the response is `503`, the worker is not configured (missing secret or service role key). If it is `401`, the presented secret did not match.
 
 The worker claims bounded jobs with row locks, removes private seller-logo objects, deletes workspace data, deletes the Auth user, and marks the allowlist entry purged. Failed jobs retain a non-PII error code and can be retried by the next worker run.
 
