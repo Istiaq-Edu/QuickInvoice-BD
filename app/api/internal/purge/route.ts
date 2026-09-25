@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { authorizeWorkerRequest } from "@/lib/internal/worker-auth"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -25,13 +25,6 @@ class PurgeFailure extends Error {
     super(code)
     this.code = code
   }
-}
-
-function secretsMatch(received: string | null, expected: string) {
-  if (!received) return false
-  const receivedBytes = Buffer.from(received)
-  const expectedBytes = Buffer.from(expected)
-  return receivedBytes.length === expectedBytes.length && timingSafeEqual(receivedBytes, expectedBytes)
 }
 
 function isMissingAuthUser(error: { status?: number; code?: string; message?: string } | null) {
@@ -143,17 +136,8 @@ async function processJob(admin: NonNullable<ReturnType<typeof createSupabaseAdm
 }
 
 async function handlePurgeRequest(request: Request) {
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret) {
-    return NextResponse.json({ error: "Purge worker is not configured: set CRON_SECRET in the server environment." }, { status: 503 })
-  }
-
-  const authorization = request.headers.get("authorization")
-  const bearerSecret = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : null
-  const headerSecret = request.headers.get("x-cron-secret")
-  if (!secretsMatch(bearerSecret, cronSecret) && !secretsMatch(headerSecret, cronSecret)) {
-    return NextResponse.json({ error: "Invalid purge worker credentials." }, { status: 401 })
-  }
+  const unauthorized = authorizeWorkerRequest(request, "Purge worker is not configured: set CRON_SECRET in the server environment.")
+  if (unauthorized) return unauthorized
 
   const admin = createSupabaseAdminClient()
   if (!admin) {

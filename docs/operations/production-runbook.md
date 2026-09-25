@@ -70,6 +70,22 @@ Migrations are forward-only in production. Do not manually delete migration hist
 5. If account purge is involved, stop the worker and inspect `account_purge_jobs` before retrying. Jobs are designed to be retried using non-PII error codes.
 6. Document the root cause and follow-up test before restoring normal operation.
 
+## Verifying migrations
+
+There is no disposable beta or staging Supabase project, so migrations are never verified by applying them somewhere and hoping. `npm test` applies the entire chain to a real Postgres running in-process (PGlite, i.e. Postgres compiled to WebAssembly) with only the two Supabase-provided schemas stubbed, and asserts:
+
+- every migration applies, in order, from `0001` to the newest;
+- the columns and indexes the logo lifecycle depends on exist;
+- `anon` and `authenticated` cannot execute `mark_unused_logo_assets`, and `service_role` can;
+- the retention rules select the right rows. The fixture builds one asset per exclusion rule, then calls the function with a realistic window and with a zero-day window, so age protection and reference protection are each proven on their own, followed by a third call that must retire nothing;
+- the draft sanitiser keeps a valid workspace logo reference, drops a malformed one, drops another workspace's asset, and leaves every other document field alone.
+
+It needs no credentials and no network, takes about two seconds, and runs as part of `npm test`. Run it on its own with `npm run test:db`.
+
+Two optional suites check the same invariants against a real Supabase project and are skipped unless their own credentials are provided: `npm run test:supabase` (RLS through the API) and `npm run test:supabase:sql` (privileges and catalog through `psql`). Use them before a production migration, not instead of the local gate.
+
+Applying a migration to production is still a one-way door, so take a backup first: `mark_unused_logo_assets` only ever sets `deleted_at`, and the worker only ever deletes objects it has already marked, but a schema-level mistake is still worth a restore point.
+
 ## Account purge operations
 
 Purge requires both `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` as server-only variables. Both are set to Production only on Vercel, and both must exist before the worker can run.
@@ -88,6 +104,34 @@ Read the secret back out of the Vercel dashboard only when needed, and never com
 If the response is `503`, the worker is not configured (missing secret or service role key). If it is `401`, the presented secret did not match.
 
 The worker claims bounded jobs with row locks, removes private seller-logo objects, deletes workspace data, deletes the Auth user, and marks the allowlist entry purged. Failed jobs retain a non-PII error code and can be retried by the next worker run.
+
+## Superseded logo retention
+
+Logo uploads are append-only on purpose: a finalized invoice snapshots the asset it was issued with, so replacing a logo can never invalidate history. The cost is that every replacement leaves the old file in the `seller-logos` bucket, so retention is bounded by a second worker at `/api/internal/logo-gc`. It uses the same `SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET`, answers `GET` and `POST`, and is scheduled daily at `30 3 * * *`.
+
+It runs in two phases so neither can destroy something still in use:
+
+1. **Retire.** The database marks live assets that are older than the retention window, skipping the workspace's current logo, any logo a saved seller profile points at, and any logo an invoice references through either its finalization snapshot or its draft document. A marked asset is invisible to the app immediately, because every read filters `deleted_at is null`.
+2. **Sweep.** After the grace window the worker deletes the object from the bucket and stamps `storage_purged_at`. The object is removed *before* the stamp, so a failed removal is retried on the next run instead of leaking the file. Rows are never hard deleted here; account purge still owns that.
+
+The response reports `retired` and `swept` counts, and a `failed` list of non-PII error codes. A non-empty `failed` means at least one object could not be removed and will be retried on the next run. `503` and `401` mean the same thing as for the purge worker.
+
+Tune the policy with server-only environment variables. All three are optional, and an unusable value falls back to the default:
+
+| Variable | Default | Range | Effect |
+| --- | --- | --- | --- |
+| `LOGO_RETENTION_DAYS` | 30 | 1–3650 | How long a superseded logo stays selectable before it is retired. |
+| `LOGO_SWEEP_GRACE_DAYS` | 7 | 0–365 | Extra margin between retiring an asset and deleting its file. |
+| `LOGO_SWEEP_LIMIT` | 500 | 1–5000 | Assets retired and swept per run, so a first run cannot time out. |
+
+Run it on demand with the same credential as the purge worker:
+
+```bash
+curl -X POST https://quickinvoice-bd.vercel.app/api/internal/logo-gc \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Uploading an image byte-for-byte identical to a logo the workspace already holds reuses the existing asset instead of writing a second object and row, so repeated re-uploads of the same file cost nothing.
 
 ## Required dashboard action
 

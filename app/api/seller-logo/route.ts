@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { LOGO_BUCKET, signLogoUrl } from "@/lib/supabase/logo"
+import { hashLogoBytes, LOGO_BUCKET, logoUrlExpiresAt, signLogoUrl } from "@/lib/supabase/logo"
 
 const maxBytes = 2 * 1024 * 1024
 /** Clamp client-reported pixel dimensions; they are display hints, not trusted data. */
@@ -54,7 +54,17 @@ export async function GET() {
   const url = await signLogoUrl(context.supabase, asset.storage_path)
   if (!url) return NextResponse.json({ logo: null })
   return NextResponse.json(
-    { logo: { id: asset.id, url, mimeType: asset.mime_type, byteSize: asset.byte_size, width: asset.width, height: asset.height } },
+    {
+      logo: {
+        id: asset.id,
+        url,
+        expiresAt: logoUrlExpiresAt(),
+        mimeType: asset.mime_type,
+        byteSize: asset.byte_size,
+        width: asset.width,
+        height: asset.height,
+      },
+    },
     { headers: { "cache-control": "private, no-store" } },
   )
 }
@@ -71,16 +81,72 @@ export async function POST(request: Request) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (!type.signature(bytes)) return NextResponse.json({ error: "The file contents do not match its image type." }, { status: 400 })
 
+  // The client already cropped and downscaled, so it can report the real pixel
+  // size. Persisting it lets the UI reserve space and avoid layout shift.
+  const width = readDimension(formData?.get("width") ?? null)
+  const height = readDimension(formData?.get("height") ?? null)
+  const contentHash = await hashLogoBytes(bytes)
+
+  // Uploading the same image again is a no-op instead of a second object and a
+  // second row. Matching on the content hash means the workspace keeps the asset
+  // it already has, which also preserves whatever invoices snapshot it.
+  const { data: duplicate, error: duplicateError } = await context.supabase
+    .from("logo_assets")
+    .select("id, storage_path, mime_type, byte_size, width, height")
+    .eq("workspace_id", context.workspaceId)
+    .eq("content_hash", contentHash)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (duplicateError) return NextResponse.json({ error: "Logo could not be uploaded." }, { status: 500 })
+
+  if (duplicate) {
+    // Earlier rows can predate dimension tracking, and the same bytes always
+    // yield the same dimensions, so filling the gap here is safe.
+    let knownWidth = duplicate.width
+    let knownHeight = duplicate.height
+    if ((knownWidth === null || knownHeight === null) && (width !== null || height !== null)) {
+      const patch: { width: number | null; height: number | null } = {
+        width: knownWidth ?? width,
+        height: knownHeight ?? height,
+      }
+      const { data: patched } = await context.supabase
+        .from("logo_assets")
+        .update(patch)
+        .eq("id", duplicate.id)
+        .select("width, height")
+        .maybeSingle()
+      knownWidth = patched?.width ?? knownWidth
+      knownHeight = patched?.height ?? knownHeight
+    }
+
+    const { data: reused, error: reuseError } = await context.supabase.rpc("set_current_logo", { p_logo_asset_id: duplicate.id })
+    if (reuseError || reused !== true) return NextResponse.json({ error: "Logo could not be activated." }, { status: 500 })
+    const reusedUrl = await signLogoUrl(context.supabase, duplicate.storage_path)
+    return NextResponse.json(
+      {
+        logo: {
+          id: duplicate.id,
+          url: reusedUrl,
+          expiresAt: logoUrlExpiresAt(),
+          mimeType: duplicate.mime_type,
+          byteSize: duplicate.byte_size,
+          width: knownWidth,
+          height: knownHeight,
+          reused: true,
+        },
+      },
+      { status: 200 },
+    )
+  }
+
   const assetId = crypto.randomUUID()
   const storagePath = `workspaces/${context.workspaceId}/logos/${assetId}.${type.extension}`
   const { error: uploadError } = await context.supabase.storage.from(LOGO_BUCKET).upload(storagePath, file, { contentType: file.type, cacheControl: "31536000", upsert: false })
   if (uploadError) return NextResponse.json({ error: "Logo could not be uploaded." }, { status: 500 })
 
-  // The client already cropped and downscaled, so it can report the real pixel
-  // size. Persisting it lets the UI reserve space and avoid layout shift.
-  const width = readDimension(formData?.get("width") ?? null)
-  const height = readDimension(formData?.get("height") ?? null)
-  const { error: assetError } = await context.supabase.from("logo_assets").insert({ id: assetId, workspace_id: context.workspaceId, storage_path: storagePath, mime_type: file.type, byte_size: file.size, width, height, content_hash: `${file.size}:${file.lastModified}` })
+  const { error: assetError } = await context.supabase.from("logo_assets").insert({ id: assetId, workspace_id: context.workspaceId, storage_path: storagePath, mime_type: file.type, byte_size: file.size, width, height, content_hash: contentHash })
   if (assetError) {
     await context.supabase.storage.from(LOGO_BUCKET).remove([storagePath])
     return NextResponse.json({ error: "Logo metadata could not be saved." }, { status: 500 })
@@ -94,7 +160,10 @@ export async function POST(request: Request) {
   }
 
   const url = await signLogoUrl(context.supabase, storagePath)
-  return NextResponse.json({ logo: { id: assetId, url, mimeType: file.type, byteSize: file.size, width, height } }, { status: 201 })
+  return NextResponse.json(
+    { logo: { id: assetId, url, expiresAt: logoUrlExpiresAt(), mimeType: file.type, byteSize: file.size, width, height, reused: false } },
+    { status: 201 },
+  )
 }
 
 export async function DELETE() {

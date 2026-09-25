@@ -8,7 +8,9 @@ const testPassword = process.env.SUPABASE_TEST_PASSWORD ?? ""
 const hasAnonymousConfig = Boolean(supabaseUrl && publishableKey)
 const hasAuthenticatedConfig = Boolean(hasAnonymousConfig && testEmail && testPassword)
 
-const protectedTables = ["workspaces", "profiles", "seller_profiles", "customers", "templates", "invoices", "invoice_lines"] as const
+// logo_assets holds every workspace's storage paths, so it belongs in this list
+// even though it is not a "business" table like the others.
+const protectedTables = ["workspaces", "profiles", "seller_profiles", "logo_assets", "customers", "templates", "invoices", "invoice_lines"] as const
 
 function testClient() {
   return createClient(supabaseUrl, publishableKey, {
@@ -38,6 +40,11 @@ describe("Supabase RLS smoke test", () => {
 
     const { error } = await supabase.rpc("current_workspace_id")
     expect(error, "Anonymous client can execute current_workspace_id RPC").not.toBeNull()
+
+    // The logo retention worker can retire assets for any workspace, so it must
+    // stay unreachable from a browser session.
+    const { error: logoGcError } = await supabase.rpc("mark_unused_logo_assets", { p_retention_days: 0, p_limit: 1 })
+    expect(logoGcError, "Anonymous client can execute mark_unused_logo_assets RPC").not.toBeNull()
   })
 
   it.skipIf(!hasAuthenticatedConfig)("limits an explicit test account to its own workspace (requires all SUPABASE_TEST_* credentials)", async () => {
@@ -67,7 +74,7 @@ describe("Supabase RLS smoke test", () => {
       if (workspaceError) throw new Error(`Could not read the authenticated test workspace: ${workspaceError.message}`)
       expect(workspaces).toEqual([{ id: workspaceId, owner_user_id: userData.user.id }])
 
-      for (const table of ["seller_profiles", "customers", "templates", "invoices"] as const) {
+      for (const table of ["seller_profiles", "logo_assets", "customers", "templates", "invoices"] as const) {
         const { data, error } = await supabase.from(table).select("workspace_id")
         if (error) throw new Error(`Could not query authenticated public.${table}: ${error.message}`)
         expect(data?.every((row) => row.workspace_id === workspaceId), `Authenticated client crossed workspace boundary in public.${table}`).toBe(true)

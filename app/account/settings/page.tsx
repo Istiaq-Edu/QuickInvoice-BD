@@ -11,8 +11,18 @@ import { WorkspacePageHeader } from "@/components/workspace-page-header"
 import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
+import { clearCachedLogoUrl, resolveLogoImageUrl } from "@/lib/image/logo-url-cache"
 
-type SellerLogo = { id: string; url: string | null; mimeType: string; byteSize: number; width: number | null; height: number | null }
+type SellerLogo = {
+  id: string
+  url: string | null
+  expiresAt?: string | null
+  mimeType: string
+  byteSize: number
+  width: number | null
+  height: number | null
+}
+
 type SellerProfile = {
   companyName: string
   sellerName: string
@@ -49,7 +59,11 @@ export default function AccountSettingsPage() {
   useEffect(() => {
     fetch("/api/seller-logo").then(async (response) => {
       const result = await response.json() as { logo?: SellerLogo | null }
-      if (response.ok) setLogo(result.logo ?? null)
+      if (!response.ok) return
+      // Same asset id means the URL this tab already used is still good, so the
+      // browser serves the image from its own cache.
+      const logo = result.logo ?? null
+      setLogo(logo ? { ...logo, url: resolveLogoImageUrl(logo) } : null)
     }).catch(() => undefined)
   }, [])
 
@@ -76,7 +90,7 @@ export default function AccountSettingsPage() {
       const response = await fetch("/api/seller-logo", { method: "POST", body })
       const result = await response.json() as { logo?: SellerLogo; error?: string }
       if (!response.ok) throw new Error(result.error ?? "Logo could not be uploaded.")
-      setLogo(result.logo ?? null)
+      setLogo(result.logo ? { ...result.logo, url: resolveLogoImageUrl(result.logo) } : null)
       setMessage("Seller logo uploaded.")
     } catch (uploadError: unknown) {
       setError(uploadError instanceof Error ? uploadError.message : "Logo could not be uploaded.")
@@ -92,6 +106,7 @@ export default function AccountSettingsPage() {
       const response = await fetch("/api/seller-logo", { method: "DELETE" })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error ?? "Logo could not be removed.")
+      clearCachedLogoUrl()
       setLogo(null)
       setMessage("Seller logo removed from future invoices.")
     } catch (removeError: unknown) {

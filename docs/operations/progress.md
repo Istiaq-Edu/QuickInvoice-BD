@@ -8,8 +8,23 @@
 - **Branch:** `main`
 - **Base commit:** `acd4d89` (`Harden beta invoice workflow`)
 - **Working tree:** contains the uncommitted changes listed below, plus the targeted fixes made during this continuation; no commit was created.
-- **Supabase test target:** `invoice-studio` (`sqbpvpwroyrabfixfgkg`) is active and has migrations `0001`–`0026` applied. Treat it as the disposable beta/test project; do not assume it is production.
+- **Supabase test target:** none configured. There is no disposable beta or staging project, so do not assume one exists and do not apply migrations to a real project to "test" them. `npm test` applies the whole migration chain to a real Postgres running in-process (PGlite) and asserts the logo retention and draft-sanitiser behaviour there, which is the migration gate. The live RLS suite (`npm run test:supabase`) and the psql smoke test (`npm run test:supabase:sql`) only run when their own credentials are supplied explicitly, and they skip loudly otherwise.
 - **Important limitation:** the previous chat context is not available in this session. The task list below is reconstructed from the working tree, recent commits, the implementation plan, and the existing operational documentation.
+
+## Superseded logo lifecycle
+
+- [x] Replaced the upload's `content_hash` value, previously a `size:lastModified` pair that collided for two different files, with a SHA-256 of the uploaded bytes.
+- [x] Uploading an image the workspace already holds now reuses the live asset instead of writing a second object and a second row, repointing `workspaces.current_logo_asset_id` and backfilling dimensions the earlier row was missing.
+- [x] Added `/api/internal/logo-gc`, a cron worker that reclaims the storage of superseded logos in two phases: retire (soft delete, invisible immediately) then sweep (delete the object, stamp `storage_purged_at`).
+- [x] Retirement skips the current logo, seller-profile logos, and any logo an invoice references through `logo_asset_id_snapshot` *or* the draft's `canonical_document`, so no history can be collected. Rows are never hard deleted, which keeps `prevent_historical_logo_delete` intact.
+- [x] The object is removed before its row is stamped, so a failed removal is retried on the next run instead of silently leaking the file; a failure for one asset no longer stops the sweep.
+- [x] Extracted the shared `CRON_SECRET` check into `lib/internal/worker-auth.ts` so both internal workers use one timing-safe comparison and one refusal path.
+- [x] Added the indexes the retention query needs: live assets by age, assets pending a sweep, and the invoices document expression that was previously a full scan per candidate.
+- [x] The logo API now reports `expiresAt` for the signed URL it returns, and the invoice and settings pages reuse a still-valid URL for the same asset, so the image is served from the browser cache instead of being downloaded again behind a newly signed URL.
+- [x] A cached URL is only reused after the server confirms the same asset id, and it is dropped on sign-out, so a shared browser cannot render another account's logo.
+- [x] Retention is tunable through `LOGO_RETENTION_DAYS`, `LOGO_SWEEP_GRACE_DAYS` and `LOGO_SWEEP_LIMIT`, each bounded and defaulted; see the runbook.
+- [x] Closed a data-hygiene hole found in review: a draft document is client supplied and `save_invoice_draft` never checked the `logoAssetId` inside it, so a foreign or malformed id could be stored and would pin an asset against retention. A write-time trigger (migration `0028`) now drops an invalid reference on every write path, and can only ever remove the key, never invent one.
+- [x] Replaced the unverifiable "apply it to a test project" step with a real gate: `npm test` now applies all migrations to an in-process Postgres (PGlite) and asserts the retention rules, the sanitiser, and the privilege model, with no credentials and no project. The live RLS and psql suites keep the same assertions for when credentials exist, and both RLS suites were extended because `logo_assets` had never been in their protected-table lists.
 
 ## Latest invoice-page profile workflow
 
@@ -67,7 +82,15 @@ These changes are present but not yet committed and should be treated as one rev
   - `supabase/migrations/0024_saved_invoice_libraries.sql`
   - `supabase/migrations/0025_line_item_discounts.sql`
   - `supabase/migrations/0026_fix_line_discount_rpc.sql`
-  - Migrations `0001`–`0026` are applied to the active `invoice-studio` test target. Live authenticated RPC/purge behavior still needs test credentials and disposable execution.
+  - Migrations `0001`–`0028` are applied to the active `invoice-studio` project. Live authenticated RPC/purge behavior still needs test credentials and disposable execution.
+- [x] **Applied `0027` and `0028` to `invoice-studio` (2026-09-25 21:05 UTC)**
+  - Remote was verified to be sitting exactly at `0026` first: none of the eight objects the two migrations create were present, so there was no partially-applied state to reconcile.
+  - Gate run before applying: `npm run test:db` applied all 28 migrations to PGlite in order and passed 7/7 checks.
+  - Applied `logo_asset_lifecycle` (version `20260925210506`) then `sanitize_invoice_logo_reference` (version `20260925210511`), stripping only the explicit `begin;`/`commit;` wrappers because the tool supplies its own transaction.
+  - Post-apply verification: all 8 objects present, the invoices trigger `ENABLED`, `anon` and `authenticated` cannot execute `mark_unused_logo_assets` while `service_role` can, and `sanitize_invoice_logo_reference` is closed to both browser roles.
+  - Exercised the `0028` trigger against a rolled-back transaction; it kept a live own-workspace asset and stripped a soft-deleted asset, a live foreign-workspace asset, a forged well-formed uuid, and a non-uuid string, while leaving a document with no logo key untouched.
+  - Data confirmed unchanged afterwards: 30 invoices, 2 logo assets, 0 retired, 5 legitimate `logoAssetId` references intact, no test residue.
+  - Advisors re-run after the schema change. No new finding from these two migrations. The pre-existing `authenticated_security_definer_function_executable` warning covers the 14 app-facing RPCs and intentionally does not include `mark_unused_logo_assets`. The four new indexes show as unused only because the `/api/internal/logo-gc` worker is not deployed yet. The `auth_leaked_password_protection` warning is still the dashboard action in the runbook.
 - [x] **Export reliability**
   - `lib/invoice/export.ts`
   - `app/page.tsx`

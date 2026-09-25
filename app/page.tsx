@@ -9,6 +9,7 @@ import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
+import { clearCachedLogoUrl, resolveLogoImageUrl, type LogoImagePayload } from "@/lib/image/logo-url-cache"
 import { clearSessionLogo, loadSessionLogo, saveSessionLogo, type SessionLogo } from "@/lib/image/session-logo"
 import { SignOutButton } from "@/components/sign-out-button"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -236,6 +237,9 @@ export default function Home() {
       if (!user) {
         setLogoAssetId(null)
         setPendingCrop(null)
+        // The signed URL is a short-lived capability, so it does not outlive the
+        // session that was allowed to use it.
+        clearCachedLogoUrl()
         // A guest session logo should survive signing out.
         setLogoUrl(sessionLogoUrlRef.current ?? null)
       }
@@ -256,11 +260,15 @@ export default function Home() {
   useEffect(() => {
     if (!accountEmail) return
     void fetch("/api/seller-logo").then(async (response) => {
-      const result = await response.json() as { logo?: { id?: string; url?: string | null } | null }
-      if (response.ok && !finalizedInvoiceLoaded.current) {
-        setLogoAssetId(result.logo?.id ?? null)
-        setLogoUrl(result.logo?.url ?? null)
-      }
+      const result = await response.json() as { logo?: LogoImagePayload | null }
+      if (!response.ok) return
+      // Reuses the URL this tab already holds when the workspace still points at
+      // the same asset, so the image comes from the browser cache instead of
+      // being downloaded again behind a freshly signed URL.
+      const imageUrl = resolveLogoImageUrl(result.logo)
+      if (finalizedInvoiceLoaded.current) return
+      setLogoAssetId(result.logo?.id ?? null)
+      setLogoUrl(imageUrl)
     }).catch(() => undefined)
   }, [accountEmail])
 
@@ -570,7 +578,7 @@ export default function Home() {
         request.onerror = () => reject(new Error("Logo upload failed. Check your connection and try again."))
         request.send(body)
       })
-      const response = JSON.parse(result.body) as { logo?: { id?: string; url?: string | null }; error?: string }
+      const response = JSON.parse(result.body) as { logo?: LogoImagePayload; error?: string }
       if (result.status < 200 || result.status >= 300) throw new Error(response.error ?? "Logo could not be uploaded.")
       setLogoUploadProgress(100)
       const remainingVisibleTime = Math.max(0, 700 - (Date.now() - uploadStartedAt))
@@ -583,7 +591,7 @@ export default function Home() {
       setSessionLogo(null)
       void clearSessionLogo()
       setLogoAssetId(response.logo?.id ?? null)
-      setLogoUrl(response.logo?.url ?? null)
+      setLogoUrl(resolveLogoImageUrl(response.logo))
       setPendingCrop(null)
       setLogoMessage("Company logo uploaded and ready for new invoices.")
     } catch (uploadError: unknown) {
@@ -601,6 +609,7 @@ export default function Home() {
       const response = await fetch("/api/seller-logo", { method: "DELETE" })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error ?? "Logo could not be removed.")
+      clearCachedLogoUrl()
       setLogoAssetId(null)
       setLogoUrl(null)
       setLogoMessage("Company logo removed from future invoices.")

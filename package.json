@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run",
+    "test": "vitest run && node tests/supabase/run-migrations.mjs",
     "test:unit": "vitest run tests/unit",
+    "test:db": "node tests/supabase/run-migrations.mjs",
     "test:supabase": "vitest run tests/supabase/rls.test.ts",
     "test:supabase:sql": "node tests/supabase/run-sql-smoke.mjs",
     "test:e2e": "playwright test",
@@ -32,6 +33,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

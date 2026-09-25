@@ -54,7 +54,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 ## Database
 
-Apply the SQL files in `supabase/migrations` in numerical order through `0026_fix_line_discount_rpc.sql`. They define the invoice lifecycle, workspace isolation, saved libraries, seller branding, line-item discounts, and administrative workflows.
+Apply the SQL files in `supabase/migrations` in numerical order through `0029_normalize_invoice_logo_reference.sql`. They define the invoice lifecycle, workspace isolation, saved libraries, seller branding, line-item discounts, administrative workflows, and superseded-logo retention.
 
 ## Validation
 
@@ -79,7 +79,7 @@ The repository is connected to Vercel through GitHub. Pushes to `main` automatic
 
 [https://quickinvoice-bd.vercel.app](https://quickinvoice-bd.vercel.app)
 
-Other branches create preview deployments. Before enabling authenticated features, configure the Supabase variables in Vercel and apply all migrations through `0026`.
+Other branches create preview deployments. Before enabling authenticated features, configure the Supabase variables in Vercel and apply all migrations through `0029`.
 
 ## Structure
 

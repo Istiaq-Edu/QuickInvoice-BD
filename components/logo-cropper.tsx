@@ -40,7 +40,7 @@ const handlePositions: Array<{ id: CropHandle; className: string; cursor: string
   { id: "w", className: "left-0 top-1/2 -translate-x-1/2 -translate-y-1/2", cursor: "ew-resize", label: "Crop left edge" },
 ]
 
-type DragState = { mode: "move" | CropHandle; startX: number; startY: number; startCrop: CropRect }
+type DragState = { mode: "move" | CropHandle; startX: number; startY: number; startCrop: CropRect; rect: CropRect }
 
 export type CroppedLogo = { file: File; width: number; height: number }
 
@@ -62,7 +62,10 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const pendingRef = useRef<{ clientX: number; clientY: number } | null>(null)
+  const frameRef = useRef<number | null>(null)
   const titleId = useId()
 
   const bounds: ImageBounds = useMemo(
@@ -181,24 +184,63 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [bounds, displayScale, onCancel])
 
+  // Dragging is applied straight to the DOM. A pointer reports far more
+  // positions than the display has frames, and a React render of the whole
+  // dialog per position cost more than a frame's budget. The box is moved
+  // imperatively once per frame, and React state is committed when the drag
+  // ends, so the crop still follows the pointer exactly.
   useEffect(() => {
-    const handleMove = (event: PointerEvent) => {
+    const paint = (rect: CropRect) => {
+      const overlay = overlayRef.current
+      if (!overlay) return
+      overlay.style.left = `${rect.x * displayScale}px`
+      overlay.style.top = `${rect.y * displayScale}px`
+      overlay.style.width = `${rect.width * displayScale}px`
+      overlay.style.height = `${rect.height * displayScale}px`
+    }
+
+    // Pointer deltas arrive in screen pixels; the crop lives in image pixels.
+    const resolve = (drag: DragState, pointer: { clientX: number; clientY: number }) => {
+      const deltaX = (pointer.clientX - drag.startX) / displayScale
+      const deltaY = (pointer.clientY - drag.startY) / displayScale
+      const moved =
+        drag.mode === "move"
+          ? applyMoveDelta(drag.startCrop, deltaX, deltaY, bounds)
+          : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, bounds, minEdge)
+      return aspect ? constrainToAspect(moved, aspect, bounds, minEdge) : moved
+    }
+
+    const flush = () => {
+      frameRef.current = null
       const drag = dragRef.current
-      if (!drag) return
-      // Pointer deltas arrive in screen pixels; the crop lives in image pixels.
-      const deltaX = (event.clientX - drag.startX) / displayScale
-      const deltaY = (event.clientY - drag.startY) / displayScale
-      setCrop(() => {
-        const moved =
-          drag.mode === "move"
-            ? applyMoveDelta(drag.startCrop, deltaX, deltaY, bounds)
-            : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, bounds, minEdge)
-        return aspect ? constrainToAspect(moved, aspect, bounds, minEdge) : moved
-      })
+      const pointer = pendingRef.current
+      pendingRef.current = null
+      if (!drag || !pointer) return
+      drag.rect = resolve(drag, pointer)
+      paint(drag.rect)
+    }
+
+    const handleMove = (event: PointerEvent) => {
+      if (!dragRef.current) return
+      // Keep only the newest position and apply it once per frame, so a
+      // high-polling mouse can never queue more work than a paint.
+      pendingRef.current = { clientX: event.clientX, clientY: event.clientY }
+      if (frameRef.current === null) frameRef.current = requestAnimationFrame(flush)
     }
 
     const stop = () => {
+      const drag = dragRef.current
+      // Land the last reported position before dropping the drag, otherwise the
+      // crop finishes one frame behind the pointer.
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current)
+        flush()
+      }
+      pendingRef.current = null
       dragRef.current = null
+      // Hand the DOM-only result back to React so every other control and the
+      // export read the same rect the user sees.
+      if (drag) setCrop(drag.rect)
     }
 
     window.addEventListener("pointermove", handleMove)
@@ -208,6 +250,10 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       window.removeEventListener("pointermove", handleMove)
       window.removeEventListener("pointerup", stop)
       window.removeEventListener("pointercancel", stop)
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
+      }
     }
   }, [aspect, bounds, displayScale, minEdge])
 
@@ -215,7 +261,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
     if (!crop) return
     event.preventDefault()
     event.stopPropagation()
-    dragRef.current = { mode, startX: event.clientX, startY: event.clientY, startCrop: crop }
+    dragRef.current = { mode, startX: event.clientX, startY: event.clientY, startCrop: crop, rect: crop }
   }
 
   const output = useMemo(() => {
@@ -251,8 +297,12 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
     : null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/45 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="flex max-h-[94vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      {/* The dim and the blur live on their own static layer. As a wrapper around
+          the crop overlay its backdrop-filter was invalidated by every drag
+          frame, which re-filtered the viewport and made dragging feel laggy. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-foreground/45 backdrop-blur-sm" />
+      <div className="relative flex max-h-[94vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <Crop size={18} className="shrink-0 text-primary" />
@@ -277,36 +327,42 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
           <>
             <div ref={stageRef} className="relative h-[46vh] min-h-56 touch-none overflow-hidden bg-foreground/5 select-none sm:h-[420px]">
               <div className="absolute inset-0 flex items-center justify-center">
-                <canvas
-                  ref={canvasRef}
-                  aria-label="Image being cropped"
-                  className="max-w-none"
+                <div
+                  className="relative shrink-0 select-none touch-none"
                   style={{ width: displayWidth, height: displayHeight }}
-                />
-              </div>
-              <div
-                className="absolute cursor-move touch-none"
-                style={{ left: cropBox.left, top: cropBox.top, width: cropBox.width, height: cropBox.height, boxShadow: "0 0 0 9999px rgba(20,28,24,0.55)" }}
-                onPointerDown={(event) => startDrag(event, "move")}
-                role="application"
-                aria-label="Crop area. Use the arrow keys to move it."
-                tabIndex={0}
-              >
-                <div className="pointer-events-none absolute inset-0 border-2 border-white shadow-[0_0_0_1px_rgba(20,28,24,0.4)]" />
-                <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-45">
-                  {Array.from({ length: 9 }).map((_, index) => (
-                    <span key={index} className="border border-white/70" />
-                  ))}
-                </div>
-                {handlePositions.map((handle) => (
-                  <div
-                    key={handle.id}
-                    aria-label={handle.label}
-                    className={`absolute z-10 size-4 rounded-full border-2 border-white bg-primary shadow-md after:absolute after:-inset-2 after:content-[''] ${handle.className}`}
-                    style={{ cursor: handle.cursor, touchAction: "none" }}
-                    onPointerDown={(event) => startDrag(event, handle.id)}
+                >
+                  <canvas
+                    ref={canvasRef}
+                    aria-label="Image being cropped"
+                    className="block max-w-none"
+                    style={{ width: displayWidth, height: displayHeight }}
                   />
-                ))}
+                  <div
+                    ref={overlayRef}
+                    className="absolute cursor-move touch-none"
+                    style={{ left: cropBox.left, top: cropBox.top, width: cropBox.width, height: cropBox.height, boxShadow: "0 0 0 9999px rgba(20,28,24,0.55)" }}
+                    onPointerDown={(event) => startDrag(event, "move")}
+                    role="application"
+                    aria-label="Crop area. Use the arrow keys to move it."
+                    tabIndex={0}
+                  >
+                    <div className="pointer-events-none absolute inset-0 border-2 border-white shadow-[0_0_0_1px_rgba(20,28,24,0.4)]" />
+                    <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-45">
+                      {Array.from({ length: 9 }).map((_, index) => (
+                        <span key={index} className="border border-white/70" />
+                      ))}
+                    </div>
+                    {handlePositions.map((handle) => (
+                      <div
+                        key={handle.id}
+                        aria-label={handle.label}
+                        className={`absolute z-10 size-4 rounded-full border-2 border-white bg-primary shadow-md after:absolute after:-inset-2 after:content-[''] ${handle.className}`}
+                        style={{ cursor: handle.cursor, touchAction: "none" }}
+                        onPointerDown={(event) => startDrag(event, handle.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
