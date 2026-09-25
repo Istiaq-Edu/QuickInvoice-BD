@@ -45,7 +45,10 @@ test.describe("guest invoice generator", () => {
     await expect(page.getByRole("button", { name: "Sign in to use saved profile" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Load saved profile" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Save as profile" })).toHaveCount(0)
-    await expect(page.getByText("Sign in to upload and reuse a company logo.")).toBeVisible()
+    await expect(page.getByText("Guest logos are kept in this browser only.")).toBeVisible()
+    await expect(page.getByLabel("Upload a session logo")).toBeVisible()
+    // The account-only promotion control must stay hidden from guests.
+    await expect(page.getByRole("button", { name: "Save session logo to my account" })).toHaveCount(0)
 
     await openStep(page, "Bill to")
     await expect(page.getByRole("button", { name: "Sign in to use saved customers" })).toBeVisible()
@@ -66,12 +69,17 @@ test.describe("guest invoice generator", () => {
     expect(pageErrors).toEqual([])
   })
 
-  test("does not expose saved-profile or logo controls to guests", async ({ page }) => {
+  test("does not expose saved-profile or account logo controls to guests", async ({ page }) => {
     await page.goto("/")
 
     await openStep(page, "From")
     await expect(page.getByRole("button", { name: "Sign in to use saved profile" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Upload logo" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Save session logo to my account" })).toHaveCount(0)
+
+    // Guests get a session-only uploader instead, and it says so plainly.
+    await expect(page.getByLabel("Upload a session logo")).toBeVisible()
+    await expect(page.getByText("Nothing is uploaded")).toBeVisible()
 
     await openStep(page, "Bill to")
     await expect(page.getByRole("button", { name: "Sign in to use saved customers" })).toBeVisible()

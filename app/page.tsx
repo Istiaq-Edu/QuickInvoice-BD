@@ -9,6 +9,7 @@ import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
+import { clearSessionLogo, loadSessionLogo, saveSessionLogo, type SessionLogo } from "@/lib/image/session-logo"
 import { SignOutButton } from "@/components/sign-out-button"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { estimateExportPageCount, exportPreviewAsDocx, exportPreviewAsPdf } from "@/lib/invoice/export"
@@ -152,6 +153,8 @@ export default function Home() {
   const [templateSaving, setTemplateSaving] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [logoAssetId, setLogoAssetId] = useState<string | null>(null)
+  const [sessionLogo, setSessionLogo] = useState<SessionLogo | null>(null)
+  const sessionLogoUrlRef = useRef<string | null>(null)
   const [pendingCrop, setPendingCrop] = useState<File | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [logoUploadProgress, setLogoUploadProgress] = useState(0)
@@ -231,9 +234,10 @@ export default function Home() {
       setAccountEmail(user ? user.email ?? "Signed in" : null)
       setSaveState(user ? "Signed in" : "Guest mode")
       if (!user) {
-        setLogoUrl(null)
         setLogoAssetId(null)
         setPendingCrop(null)
+        // A guest session logo should survive signing out.
+        setLogoUrl(sessionLogoUrlRef.current ?? null)
       }
       setAuthChecked(true)
     }
@@ -259,6 +263,26 @@ export default function Home() {
       }
     }).catch(() => undefined)
   }, [accountEmail])
+
+  // A guest logo lives only in this browser, so it is restored on every reload.
+  // A signed-in user's account logo loads separately and takes precedence.
+  useEffect(() => {
+    let active = true
+    void loadSessionLogo().then((stored) => {
+      if (!active || !stored?.blob) return
+      const url = URL.createObjectURL(stored.blob)
+      sessionLogoUrlRef.current = url
+      setSessionLogo(stored)
+      setLogoUrl(url)
+    })
+    return () => {
+      active = false
+      if (sessionLogoUrlRef.current) {
+        URL.revokeObjectURL(sessionLogoUrlRef.current)
+        sessionLogoUrlRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -470,6 +494,43 @@ export default function Home() {
     setMessage("Sign in to load or save profiles.")
     return false
   }
+  const showSessionLogo = (stored: SessionLogo) => {
+    if (sessionLogoUrlRef.current) URL.revokeObjectURL(sessionLogoUrlRef.current)
+    const url = URL.createObjectURL(stored.blob)
+    sessionLogoUrlRef.current = url
+    setSessionLogo(stored)
+    setLogoAssetId(null)
+    setLogoUrl(url)
+  }
+
+  const applyGuestLogo = async (logo: CroppedLogo) => {
+    const stored: SessionLogo = { blob: logo.file, name: logo.file.name, width: logo.width, height: logo.height }
+    await saveSessionLogo(stored)
+    showSessionLogo(stored)
+    setLogoMessage("Logo added for this browser session only. Sign in to keep it.")
+  }
+
+  const removeGuestLogo = async () => {
+    await clearSessionLogo()
+    if (sessionLogoUrlRef.current) {
+      URL.revokeObjectURL(sessionLogoUrlRef.current)
+      sessionLogoUrlRef.current = null
+    }
+    setSessionLogo(null)
+    setLogoAssetId(null)
+    setLogoUrl(null)
+    setLogoMessage("Session logo removed.")
+  }
+
+  const promoteSessionLogo = () => {
+    if (!sessionLogo) return
+    void uploadSellerLogo({
+      file: new File([sessionLogo.blob], sessionLogo.name, { type: sessionLogo.blob.type }),
+      width: sessionLogo.width ?? 0,
+      height: sessionLogo.height ?? 0,
+    })
+  }
+
   const chooseLogo = (file: File | undefined) => {
     if (!file) return
     setLogoMessage("")
@@ -514,6 +575,13 @@ export default function Home() {
       setLogoUploadProgress(100)
       const remainingVisibleTime = Math.max(0, 700 - (Date.now() - uploadStartedAt))
       if (remainingVisibleTime > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingVisibleTime))
+      // The account logo now supersedes any guest session copy.
+      if (sessionLogoUrlRef.current) {
+        URL.revokeObjectURL(sessionLogoUrlRef.current)
+        sessionLogoUrlRef.current = null
+      }
+      setSessionLogo(null)
+      void clearSessionLogo()
       setLogoAssetId(response.logo?.id ?? null)
       setLogoUrl(response.logo?.url ?? null)
       setPendingCrop(null)
@@ -1001,7 +1069,7 @@ export default function Home() {
           <fieldset disabled={loadingDraft || finalizing} className="min-w-0 space-y-4 disabled:opacity-90" aria-label="Invoice form">
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 0 ? "" : "hidden"} xl:block`}><div className="mb-6 flex items-center justify-between gap-4"><div><h2 className="text-base font-semibold">Invoice details</h2><p className="mt-1 text-sm text-muted-foreground">Required fields are marked with an asterisk.</p></div><span className="rounded-lg border border-border bg-muted px-2.5 py-1 text-xs font-mono uppercase text-foreground/80">{invoiceNumber ? "Finalized" : "Draft"}</span></div><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_0.8fr]"><Field label="Issue date" htmlFor="issue-date"><input id="issue-date" className="field" type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></Field><Field label="Due date" htmlFor="due-date" required><input id="due-date" className="field" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></Field><Field label="Payment status" htmlFor="payment-status"><select id="payment-status" className="field" value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value as "unpaid" | "paid" | "overdue")}><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="overdue">Overdue</option></select></Field></div></div>
 
-            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading…" : "Load saved profile"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving…" : "Save as profile"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input id="seller-company-name" className="field" placeholder="Your company name" value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input id="seller-name" className="field" placeholder="Your full name" value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email"><input id="seller-email" className="field" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone"><input id="seller-phone" className="field" placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2"><textarea id="seller-address" className="field min-h-24 resize-y" placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/50">{logoUrl ? <Image src={logoUrl} alt="Current company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">No logo</span>}</div><div className="min-w-0 flex-1 space-y-3"><input id="seller-logo-upload" className="block max-w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo || Boolean(invoiceNumber)} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} /><div className="flex flex-wrap gap-2">{logoUrl && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo…" : `Uploading logo… ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber && <p className="text-xs text-muted-foreground">Logo changes apply to new invoices; this finalized invoice keeps its snapshot.</p>}</div></div> : <p className="rounded-lg border border-border bg-muted/60 p-4 text-sm text-muted-foreground">Sign in to upload and reuse a company logo.</p>}</div></div>
+            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading…" : "Load saved profile"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving…" : "Save as profile"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input id="seller-company-name" className="field" placeholder="Your company name" value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input id="seller-name" className="field" placeholder="Your full name" value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email"><input id="seller-email" className="field" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone"><input id="seller-phone" className="field" placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2"><textarea id="seller-address" className="field min-h-24 resize-y" placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/50">{logoUrl ? <Image src={logoUrl} alt="Current company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">No logo</span>}</div><div className="min-w-0 flex-1 space-y-3"><input id="seller-logo-upload" className="block max-w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo || Boolean(invoiceNumber)} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} /><div className="flex flex-wrap gap-2">{sessionLogo && <Button variant="outline" size="sm" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={promoteSessionLogo}>Save session logo to my account</Button>}{logoUrl && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{sessionLogo && <p className="text-xs text-muted-foreground">Showing the session logo. Save it to your account to keep it permanently.</p>}{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo…" : `Uploading logo… ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber && <p className="text-xs text-muted-foreground">Logo changes apply to new invoices; this finalized invoice keeps its snapshot.</p>}</div></div> : <div className="space-y-3"><div className="flex items-center gap-4"><div className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/50">{logoUrl ? <Image src={logoUrl} alt="Session company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">No logo</span>}</div><div className="min-w-0"><p className="text-sm font-medium">Session logo</p><p className="mt-1 text-xs text-muted-foreground">{sessionLogo ? `Using ${sessionLogo.name} in this browser only.` : "Optional. Add one to brand this invoice."}</p></div></div><input id="seller-logo-upload-guest" className="block max-w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload a session logo" onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} /><div className="flex flex-wrap items-center gap-2">{sessionLogo && <Button variant="ghost" size="sm" type="button" onClick={() => void removeGuestLogo()}>Remove</Button>}<Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to keep a logo</Button></div><p className="rounded-lg border border-amber-400/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-950">Guest logos are kept in this browser only. Nothing is uploaded, and the logo disappears when you clear your browser data. Sign in to save it to your account and reuse it on every invoice.</p>{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}</div>}</div></div>
 
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 2 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="Bill to" title="Customer company" description="The customer company name is the main buyer heading." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void loadCustomers()}>{loadingCustomers ? "Loading…" : "Load saved customers"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void saveCustomer()}>{savingCustomer ? "Saving…" : selectedCustomerId ? "Update saved customer" : "Save customer"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved customers</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{customerStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="buyer-company-name" required><input id="buyer-company-name" className="field" placeholder="Customer company name" value={buyerCompanyName} onChange={(event) => setBuyerCompanyName(event.target.value)} /></Field><Field label="Buyer name" htmlFor="buyer-name" required><input id="buyer-name" className="field" placeholder="Customer contact name" value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field><Field label="Email" htmlFor="buyer-email"><input id="buyer-email" className="field" type="email" placeholder="customer@example.com" value={buyerEmail} onChange={(event) => setBuyerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="buyer-phone" required><input id="buyer-phone" className="field" placeholder="01XXXXXXXXX" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} required /></Field><Field label="Address" htmlFor="buyer-address" className="sm:col-span-2"><textarea id="buyer-address" className="field min-h-24 resize-y" placeholder="Customer address" value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} /></Field></div></div>
 
@@ -1086,7 +1154,8 @@ export default function Home() {
           onCancel={() => setPendingCrop(null)}
           onConfirm={(cropped) => {
             setPendingCrop(null)
-            void uploadSellerLogo(cropped)
+            if (accountEmail) void uploadSellerLogo(cropped)
+            else void applyGuestLogo(cropped)
           }}
         />
       )}
