@@ -8,9 +8,11 @@ import { Building2, CheckCircle2, LockKeyhole, Upload } from "lucide-react"
 
 import { WorkspaceHeader } from "@/components/workspace-header"
 import { WorkspacePageHeader } from "@/components/workspace-page-header"
+import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
 
-type SellerLogo = { id: string; url: string | null; mimeType: string; byteSize: number }
+type SellerLogo = { id: string; url: string | null; mimeType: string; byteSize: number; width: number | null; height: number | null }
 type SellerProfile = {
   companyName: string
   sellerName: string
@@ -27,7 +29,7 @@ export default function AccountSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [logo, setLogo] = useState<SellerLogo | null>(null)
-  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [pendingCrop, setPendingCrop] = useState<File | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
@@ -52,19 +54,29 @@ export default function AccountSettingsPage() {
   }, [])
 
   const update = (key: keyof SellerProfile, value: string) => setProfile((current) => ({ ...current, [key]: value }))
-  const uploadLogo = async () => {
-    if (!logoFile) return
+
+  const chooseLogo = (file: File | undefined) => {
+    if (!file) return
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError("That image is larger than 2 MB. Choose a smaller file.")
+      return
+    }
+    setError("")
+    setPendingCrop(file)
+  }
+  const uploadLogo = async (logo: CroppedLogo) => {
     setUploadingLogo(true)
     setMessage("")
     setError("")
     try {
       const body = new FormData()
-      body.append("file", logoFile)
+      body.append("file", logo.file)
+      body.append("width", String(logo.width))
+      body.append("height", String(logo.height))
       const response = await fetch("/api/seller-logo", { method: "POST", body })
       const result = await response.json() as { logo?: SellerLogo; error?: string }
       if (!response.ok) throw new Error(result.error ?? "Logo could not be uploaded.")
       setLogo(result.logo ?? null)
-      setLogoFile(null)
       setMessage("Seller logo uploaded.")
     } catch (uploadError: unknown) {
       setError(uploadError instanceof Error ? uploadError.message : "Logo could not be uploaded.")
@@ -133,15 +145,25 @@ export default function AccountSettingsPage() {
 
           <aside className="surface p-5 sm:p-6">
             <div className="mb-5 flex items-center gap-3 border-b border-border pb-5"><span className="flex size-10 items-center justify-center rounded-xl border border-border bg-muted/80 text-primary"><Upload size={18} /></span><div><h2 className="font-semibold">Brand mark</h2><p className="mt-1 text-sm text-muted-foreground">Private and used on new invoices.</p></div></div>
-            <div className="flex size-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/45">{logo?.url ? <Image src={logo.url} alt="Current seller logo" width={128} height={128} unoptimized className="max-h-full max-w-full object-contain" /> : <span className="px-3 text-center text-xs text-muted-foreground">No logo uploaded</span>}</div>
-            <p className="mt-4 text-xs leading-5 text-muted-foreground">PNG, JPEG, or WebP up to 2 MB. A wide logo usually looks best on the document.</p>
-            <input className="mt-5 block w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setLogoFile(event.target.files?.[0] ?? null)} />
-            <div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" size="sm" type="button" disabled={!logoFile || uploadingLogo} onClick={() => void uploadLogo}>{uploadingLogo ? "Uploading…" : "Upload logo"}</Button>{logo && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo} onClick={() => void removeLogo}>Remove</Button>}</div>
+            <div className="flex size-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/45">{logo?.url ? <Image src={logo.url} alt="Current seller logo" width={logo.width ?? 128} height={logo.height ?? 128} unoptimized className="max-h-full max-w-full object-contain" /> : <span className="px-3 text-center text-xs text-muted-foreground">No logo uploaded</span>}</div>
+            <p className="mt-4 text-xs leading-5 text-muted-foreground">PNG, JPEG, or WebP up to 2 MB. You can crop and zoom to frame the logo before it is uploaded.</p>
+            <input className="mt-5 block w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} />
+            <div className="mt-3 flex flex-wrap gap-2">{logo && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo} onClick={() => void removeLogo}>{uploadingLogo ? "Working…" : "Remove logo"}</Button>}</div>
           </aside>
         </div>
         <div className="surface mt-5 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div><p className="text-sm font-semibold">Ready to reuse these details?</p><p className="mt-1 text-xs text-muted-foreground">New invoices can load this profile in one click.</p></div><div className="flex flex-col items-start gap-3 sm:items-end">{message && <p className="flex items-center gap-2 text-sm text-emerald-800" role="status"><CheckCircle2 size={16} />{message}</p>}{error && <p className="text-sm text-destructive" role="alert">{error}</p>}<Button className="h-11 w-full sm:w-auto" type="submit" disabled={saving}>{saving ? "Saving…" : "Save seller profile"}</Button></div></div>
       </form>}
     </div>
+    {pendingCrop && (
+      <LogoCropper
+        file={pendingCrop}
+        onCancel={() => setPendingCrop(null)}
+        onConfirm={(cropped) => {
+          setPendingCrop(null)
+          void uploadLogo(cropped)
+        }}
+      />
+    )}
   </main>
 }
 

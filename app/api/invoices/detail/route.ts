@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { resolveLogoUrl } from "@/lib/supabase/logo"
 
 const querySchema = z.string().uuid()
 
@@ -27,14 +28,7 @@ export async function GET(request: Request) {
     ? data.canonical_document.logoAssetId
     : null
   const logoAssetId = data.lifecycle_status === "finalized" ? data.logo_asset_id_snapshot : canonicalLogoAssetId
-  let logoUrl: string | null = null
-  if (logoAssetId) {
-    const { data: asset } = await supabase.from("logo_assets").select("storage_path").eq("id", logoAssetId).is("deleted_at", null).maybeSingle()
-    if (asset?.storage_path) {
-      const { data: signed } = await supabase.storage.from("seller-logos").createSignedUrl(asset.storage_path, 3600)
-      logoUrl = signed?.signedUrl ?? null
-    }
-  }
+  const logoUrl = await resolveLogoUrl(supabase, logoAssetId)
 
   return NextResponse.json({
     id: data.id,

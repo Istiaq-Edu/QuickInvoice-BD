@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { resolveLogoUrl } from "@/lib/supabase/logo"
 
 const profileSchema = z.object({
   companyName: z.string().trim().min(1, "Company name is required.").max(500),
@@ -29,14 +30,7 @@ export async function GET() {
   const { data, error } = await supabase.from("seller_profiles").select("company_name, seller_name, address_text, email, phone, website, logo_asset_id").eq("workspace_id", workspaceId).single()
   if (error || !data) return NextResponse.json({ error: "Seller profile could not be loaded." }, { status: 404 })
 
-  let logoUrl: string | null = null
-  if (data.logo_asset_id) {
-    const { data: asset } = await supabase.from("logo_assets").select("storage_path").eq("id", data.logo_asset_id).is("deleted_at", null).maybeSingle()
-    if (asset?.storage_path) {
-      const { data: signed } = await supabase.storage.from("seller-logos").createSignedUrl(asset.storage_path, 3600)
-      logoUrl = signed?.signedUrl ?? null
-    }
-  }
+  const logoUrl = await resolveLogoUrl(supabase, data.logo_asset_id)
 
   return NextResponse.json({
     companyName: data.company_name,

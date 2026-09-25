@@ -4,9 +4,11 @@ import Image from "next/image"
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, Upload, UserRound, X } from "lucide-react"
+import { AlertTriangle, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, UserRound, X } from "lucide-react"
 import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
+import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
+import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
 import { SignOutButton } from "@/components/sign-out-button"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { estimateExportPageCount, exportPreviewAsDocx, exportPreviewAsPdf } from "@/lib/invoice/export"
@@ -150,7 +152,7 @@ export default function Home() {
   const [templateSaving, setTemplateSaving] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [logoAssetId, setLogoAssetId] = useState<string | null>(null)
-  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [pendingCrop, setPendingCrop] = useState<File | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [logoUploadProgress, setLogoUploadProgress] = useState(0)
   const [logoMessage, setLogoMessage] = useState("")
@@ -231,7 +233,7 @@ export default function Home() {
       if (!user) {
         setLogoUrl(null)
         setLogoAssetId(null)
-        setLogoFile(null)
+        setPendingCrop(null)
       }
       setAuthChecked(true)
     }
@@ -468,13 +470,21 @@ export default function Home() {
     setMessage("Sign in to load or save profiles.")
     return false
   }
-  const uploadSellerLogo = async () => {
-    if (!accountEmail) {
-      setLogoError("Sign in to upload a company logo.")
+  const chooseLogo = (file: File | undefined) => {
+    if (!file) return
+    setLogoMessage("")
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setLogoError("That image is larger than 2 MB. Choose a smaller file.")
       return
     }
-    if (!logoFile) {
-      setLogoError("Choose a PNG, JPEG, or WebP logo first.")
+    setLogoError("")
+    setLogoUploadProgress(0)
+    setPendingCrop(file)
+  }
+
+  const uploadSellerLogo = async (logo: CroppedLogo) => {
+    if (!accountEmail) {
+      setLogoError("Sign in to upload a company logo.")
       return
     }
     const uploadStartedAt = Date.now()
@@ -484,7 +494,9 @@ export default function Home() {
     setLogoError("")
     try {
       const body = new FormData()
-      body.append("file", logoFile)
+      body.append("file", logo.file)
+      body.append("width", String(logo.width))
+      body.append("height", String(logo.height))
       const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
         const request = new XMLHttpRequest()
         request.open("POST", "/api/seller-logo")
@@ -504,7 +516,7 @@ export default function Home() {
       if (remainingVisibleTime > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingVisibleTime))
       setLogoAssetId(response.logo?.id ?? null)
       setLogoUrl(response.logo?.url ?? null)
-      setLogoFile(null)
+      setPendingCrop(null)
       setLogoMessage("Company logo uploaded and ready for new invoices.")
     } catch (uploadError: unknown) {
       setLogoError(uploadError instanceof Error ? uploadError.message : "Logo could not be uploaded.")
@@ -989,7 +1001,7 @@ export default function Home() {
           <fieldset disabled={loadingDraft || finalizing} className="min-w-0 space-y-4 disabled:opacity-90" aria-label="Invoice form">
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 0 ? "" : "hidden"} xl:block`}><div className="mb-6 flex items-center justify-between gap-4"><div><h2 className="text-base font-semibold">Invoice details</h2><p className="mt-1 text-sm text-muted-foreground">Required fields are marked with an asterisk.</p></div><span className="rounded-lg border border-border bg-muted px-2.5 py-1 text-xs font-mono uppercase text-foreground/80">{invoiceNumber ? "Finalized" : "Draft"}</span></div><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_0.8fr]"><Field label="Issue date" htmlFor="issue-date"><input id="issue-date" className="field" type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></Field><Field label="Due date" htmlFor="due-date" required><input id="due-date" className="field" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></Field><Field label="Payment status" htmlFor="payment-status"><select id="payment-status" className="field" value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value as "unpaid" | "paid" | "overdue")}><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="overdue">Overdue</option></select></Field></div></div>
 
-            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading…" : "Load saved profile"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving…" : "Save as profile"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input id="seller-company-name" className="field" placeholder="Your company name" value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input id="seller-name" className="field" placeholder="Your full name" value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email"><input id="seller-email" className="field" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone"><input id="seller-phone" className="field" placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2"><textarea id="seller-address" className="field min-h-24 resize-y" placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/50">{logoUrl ? <Image src={logoUrl} alt="Current company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">No logo</span>}</div><div className="min-w-0 flex-1 space-y-3"><input id="seller-logo-upload" className="block max-w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo} onChange={(event) => { setLogoFile(event.target.files?.[0] ?? null); setLogoMessage(""); setLogoError(""); setLogoUploadProgress(0) }} /><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" type="button" disabled={!logoFile || uploadingLogo || Boolean(invoiceNumber)} onClick={() => void uploadSellerLogo()}><Upload data-icon="inline-start" />{uploadingLogo ? "Uploading…" : "Upload logo"}</Button>{logoUrl && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{logoFile && !uploadingLogo && <p className="text-xs text-muted-foreground" aria-live="polite">Selected: {logoFile.name} · ready to upload</p>}{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo…" : `Uploading logo… ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber && <p className="text-xs text-muted-foreground">Logo changes apply to new invoices; this finalized invoice keeps its snapshot.</p>}</div></div> : <p className="rounded-lg border border-border bg-muted/60 p-4 text-sm text-muted-foreground">Sign in to upload and reuse a company logo.</p>}</div></div>
+            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading…" : "Load saved profile"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving…" : "Save as profile"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input id="seller-company-name" className="field" placeholder="Your company name" value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input id="seller-name" className="field" placeholder="Your full name" value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email"><input id="seller-email" className="field" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone"><input id="seller-phone" className="field" placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2"><textarea id="seller-address" className="field min-h-24 resize-y" placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className="flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/50">{logoUrl ? <Image src={logoUrl} alt="Current company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">No logo</span>}</div><div className="min-w-0 flex-1 space-y-3"><input id="seller-logo-upload" className="block max-w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo || Boolean(invoiceNumber)} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} /><div className="flex flex-wrap gap-2">{logoUrl && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo…" : `Uploading logo… ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber && <p className="text-xs text-muted-foreground">Logo changes apply to new invoices; this finalized invoice keeps its snapshot.</p>}</div></div> : <p className="rounded-lg border border-border bg-muted/60 p-4 text-sm text-muted-foreground">Sign in to upload and reuse a company logo.</p>}</div></div>
 
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 2 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="Bill to" title="Customer company" description="The customer company name is the main buyer heading." /><div className="flex flex-wrap items-center gap-2">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session…</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void loadCustomers()}>{loadingCustomers ? "Loading…" : "Load saved customers"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void saveCustomer()}>{savingCustomer ? "Saving…" : selectedCustomerId ? "Update saved customer" : "Save customer"}</Button></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved customers</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{customerStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="buyer-company-name" required><input id="buyer-company-name" className="field" placeholder="Customer company name" value={buyerCompanyName} onChange={(event) => setBuyerCompanyName(event.target.value)} /></Field><Field label="Buyer name" htmlFor="buyer-name" required><input id="buyer-name" className="field" placeholder="Customer contact name" value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field><Field label="Email" htmlFor="buyer-email"><input id="buyer-email" className="field" type="email" placeholder="customer@example.com" value={buyerEmail} onChange={(event) => setBuyerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="buyer-phone" required><input id="buyer-phone" className="field" placeholder="01XXXXXXXXX" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} required /></Field><Field label="Address" htmlFor="buyer-address" className="sm:col-span-2"><textarea id="buyer-address" className="field min-h-24 resize-y" placeholder="Customer address" value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} /></Field></div></div>
 
@@ -1068,6 +1080,16 @@ export default function Home() {
       {libraryDrawer && <SavedLibraryDrawer kind={libraryDrawer} items={savedItems} notes={savedNoteTemplates} query={libraryQuery} status={libraryStatus} loading={libraryLoading} onQueryChange={setLibraryQuery} onSearch={(query) => void loadLibrary(libraryDrawer, query)} onClose={() => setLibraryDrawer(null)} onAddItem={applySavedItem} onApplyNote={applySavedNote} onDelete={(id) => void deleteLibraryEntry(libraryDrawer, id)} />}
       {noteSaveOpen && <NoteSaveDialog title={noteSaveTitle} onTitleChange={setNoteSaveTitle} onClose={() => setNoteSaveOpen(false)} onSave={() => void saveNoteTemplate()} />}
       {finalizeConfirmOpen && <FinalizeConfirmDialog onClose={() => setFinalizeConfirmOpen(false)} onConfirm={() => void confirmFinalizeInvoice()} />}
+      {pendingCrop && (
+        <LogoCropper
+          file={pendingCrop}
+          onCancel={() => setPendingCrop(null)}
+          onConfirm={(cropped) => {
+            setPendingCrop(null)
+            void uploadSellerLogo(cropped)
+          }}
+        />
+      )}
     </main>
   )
 }
