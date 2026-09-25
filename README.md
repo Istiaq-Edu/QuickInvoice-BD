@@ -1,78 +1,103 @@
-# Invoice Studio
+# QuickInvoice-BD
 
-Bangladesh-focused invoice generator built with Next.js, shadcn/ui, Tailwind CSS, and Supabase.
+A Bangladesh-focused invoice workspace for creating, managing, and exporting professional invoices. The app supports guest invoices, authenticated workspaces, live A4 previews, reusable customer/item data, and secure server-side administration.
 
-## Current implementation
+**Production:** [quickinvoice-bd.vercel.app](https://quickinvoice-bd.vercel.app)
 
-- Responsive guest invoice editor with live A4 portrait preview
-- BDT whole-number calculations and fixed/percentage discounts
-- Authenticated incomplete-draft autosave with optimistic version conflicts
-- Authenticated invoice finalization with atomic numbering and idempotent retries
-- Invoice history search, status/date/amount filters, sorting, editing, revising, and direct PDF/DOCX re-downloads
-- English interface with Bangla-capable text entry
-- Responsive desktop/tablet/mobile line-item editing
-- Browser-side PDF and image-based DOCX exports from the live preview; production/server-side renderer hardening remains
-- Supabase browser/server client boundaries
-- Initial PostgreSQL/RLS migration in `supabase/migrations/0001_invoice_foundation.sql`
-- Lifecycle hardening and RLS migrations in `supabase/migrations/0002_harden_invoice_lifecycle.sql` and `supabase/migrations/0003_enable_private_finalization_rls.sql`
-- Atomic finalization RPC in `supabase/migrations/0004_finalize_invoices.sql`
-- Draft loading, revise-as-new, payment status updates, and Trash lifecycle actions in `supabase/migrations/0005_invoice_lifecycle_actions.sql`
-- Authenticated seller profile settings and private customer directory with automatic buyer syncing
-- Bounded template settings for accent color, contact/address visibility, and notes
-- Finalized invoices snapshot template settings through `supabase/migrations/0006_snapshot_template_settings.sql`
-- Private seller logo upload and immutable finalized-logo snapshots through `supabase/migrations/0007_manage_seller_logo.sql` and `supabase/migrations/0008_preserve_logo_snapshot.sql`
-- Invite-aware email/password login, signup, password reset, and confirmation callback screens
+## Features
 
-See [`docs/plans/2026-09-21-invoice-generator-plan.md`](docs/plans/2026-09-21-invoice-generator-plan.md) for the validated implementation plan.
+- Responsive invoice editor with live A4 portrait preview
+- BDT whole-number calculations with fixed and percentage discounts
+- Seller, customer, line-item, notes, and template controls
+- PDF and DOCX exports
+- Email/password authentication with private workspace data
+- Draft autosave, finalization, history, revision, payment status, and trash workflows
+- Saved customers, reusable items, and note templates
+- Seller profile and private logo management
+- Supabase row-level security, admin allowlist, and server-only account purge workflows
+
+## Stack
+
+- Next.js 16 and React 19
+- TypeScript
+- Tailwind CSS 4 and shadcn/ui
+- Supabase Auth, PostgreSQL, Storage, and RLS
+- Vitest and Playwright
+- Vercel hosting
 
 ## Local development
 
+### Requirements
+
+- Node.js 20+
+- npm
+- A Supabase project for authentication and persistence
+
+### Setup
+
 ```bash
+git clone https://github.com/Istiaq-Edu/QuickInvoice-BD.git
+cd QuickInvoice-BD
 npm install
 cp .env.example .env.local
 npm run dev
 ```
 
-The generator works without Supabase credentials. Auth and cloud persistence require:
+Open [http://localhost:3000](http://localhost:3000).
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` for future server-only admin/purge workflows
+Guest invoice creation and exports work without Supabase configuration. Authentication, cloud persistence, saved libraries, and admin features require the environment variables below.
 
-Apply the migration to a private Singapore Supabase project before enabling beta accounts. Keep the service-role key server-only and do not commit `.env.local`.
+## Environment variables
+
+Create `.env.local` from `.env.example`:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never expose it through a `NEXT_PUBLIC_` variable or commit it to the repository. The account-purge worker also requires a private `CRON_SECRET` in the deployment environment.
+
+## Database
+
+Apply the SQL migrations in `supabase/migrations` in numerical order, through `0026_fix_line_discount_rpc.sql`, before enabling authenticated beta features. The migrations define the invoice lifecycle, workspace isolation, saved libraries, seller branding, line-item discounts, and administrative workflows.
 
 ## Validation
 
-The default unit/security suite is non-watch and includes the invoice validation tests. Supabase tests are skipped unless the explicit `SUPABASE_TEST_*` variables are present; use a dedicated test account and the publishable key, never a service-role key.
+Run the standard checks before publishing:
 
 ```bash
-npm run test:unit
-npm run test
 npm run lint
+npm test
 npm run build
 ```
 
-Playwright starts a local Next.js dev server automatically. Install the browser once, then run the guest homepage and export checks:
+Install the Playwright browser once, then run the end-to-end suite:
 
 ```bash
 npx playwright install chromium
 npm run test:e2e
 ```
 
-The E2E suite clearly skips when Chromium is not installed. The export test completes a guest invoice and asserts that both PDF and DOCX downloads are emitted.
+The default test command skips Supabase integration tests unless the explicit test environment variables are configured. No test or migration file contains production credentials.
 
-To run the Supabase API security checks against an explicitly configured test project, set `SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY`, `SUPABASE_TEST_EMAIL`, and `SUPABASE_TEST_PASSWORD`, then run:
+## Deployment
 
-```bash
-npm run test:supabase
+The repository is connected to Vercel through GitHub. A push to `main` automatically creates a production deployment at:
+
+[https://quickinvoice-bd.vercel.app](https://quickinvoice-bd.vercel.app)
+
+Before the first authenticated deployment, configure the Supabase variables in Vercel and apply all migrations through `0026`. Branches other than `main` create preview deployments.
+
+## Project structure
+
+```text
+app/                 Next.js routes, pages, and API handlers
+components/          Shared UI and workspace components
+lib/                 Invoice, export, and Supabase utilities
+supabase/migrations/ Database schema, RLS, and RPC migrations
+tests/               Unit, Supabase, and Playwright tests
+scripts/             Local visual QA helpers
 ```
-
-The non-destructive SQL fixture can be run only with both `SUPABASE_SQL_SMOKE=1` and `SUPABASE_DB_URL` explicitly set, plus the PostgreSQL `psql` client on `PATH`:
-
-```powershell
-$env:SUPABASE_SQL_SMOKE = "1"
-$env:SUPABASE_DB_URL = "<test-database-url>"
-npm run test:supabase:sql
-```
-
-No test fixture contains credentials, and neither Supabase test command runs against a project unless its opt-in environment variables are supplied.
