@@ -1,7 +1,7 @@
 // Debug harness: drives the real guest logo upload flow in a browser so crop
 // behaviour can be observed rather than assumed. Not part of the test suite.
 import { chromium } from "@playwright/test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, statSync, writeFileSync } from "node:fs"
 
 const BASE = "http://localhost:3000"
 const OUT = "debug-out"
@@ -30,6 +30,110 @@ async function makeFixture() {
   writeFileSync(`${OUT}/fixture.png`, buffer)
   log("fixture written", buffer.length, "bytes")
   return `${OUT}/fixture.png`
+}
+
+async function makeFixture2(name, w, h, cols, rows) {
+  const browser = await chromium.launch()
+  const page = await browser.newPage({ viewport: { width: w, height: h } })
+  await page.setContent(`<body style="margin:0"><canvas id="c" width="${w}" height="${h}"></canvas>
+    <script>
+      const c = document.getElementById('c'), x = c.getContext('2d');
+      const colors = ['#e11d48','#2563eb','#16a34a','#f59e0b','#7c3aed','#0891b2','#be123c','#0f766e'];
+      for (let r = 0; r < ${rows}; r++) for (let q = 0; q < ${cols}; q++) {
+        x.fillStyle = colors[(r * ${cols} + q) % colors.length];
+        x.fillRect(q * (${w}/${cols}), r * (${h}/${rows}), ${w}/${cols}, ${h}/${rows});
+      }
+      x.strokeStyle = '#000'; x.lineWidth = 4; x.strokeRect(2, 2, ${w} - 4, ${h} - 4);
+    </script></body>`)
+  const buffer = await page.locator("#c").screenshot()
+  await browser.close()
+  const path = `${OUT}/${name}.png`
+  writeFileSync(path, buffer)
+  return path
+}
+
+// Proves the session logo is actually decodable by the browser, which is what
+// html2canvas does internally when it rasterises the page for PDF/DOCX.
+async function testExportPath(page) {
+  const decoded = await page.evaluate(async () => {
+    const img = document.querySelector('img[alt="Seller logo"]')
+    if (!img) return { found: false }
+    const src = img.currentSrc || img.src
+    if (!src.startsWith("blob:")) return { found: true, blob: false }
+    try {
+      const probe = new Image()
+      probe.src = src
+      await probe.decode()
+      return { found: true, blob: true, w: probe.naturalWidth, h: probe.naturalHeight }
+    } catch (e) {
+      return { found: true, blob: true, decodeError: String(e) }
+    }
+  })
+  log("EXPORT logo decodable:", JSON.stringify(decoded))
+
+  const preview = page.getByRole("button", { name: /Preview/ })
+  if (await preview.count()) await preview.first().click()
+  await page.waitForTimeout(700)
+
+  // Export is a deliberate no-op while the invoice is incomplete
+  // (page.tsx: `if (incomplete || !previewRef.current) return`), so fill the
+  // minimum required fields before trying to download.
+  await page.locator("#seller-company-name").fill("Session Seller")
+  await page.locator("#seller-name").fill("Owner")
+  await page.locator("#buyer-company-name").fill("Acme Buyer")
+  await page.locator("#buyer-name").fill("Buyer")
+  await page.locator("#buyer-phone").fill("01800000000")
+  await page.locator('input[id^="description-"]:visible').first().fill("Consulting")
+  await page.locator('input[id^="price-"]:visible').first().fill("1250")
+  await page.waitForTimeout(900)
+
+  for (const fmt of ["PDF", "DOCX"]) {
+    try {
+      const [download] = await Promise.all([
+        page.waitForEvent("download", { timeout: 45000 }),
+        page.getByRole("button", { name: `Download ${fmt}` }).first().click(),
+      ])
+      const p = await download.path()
+      const size = p ? statSync(p).size : 0
+      log(`EXPORT ${fmt}: ${download.suggestedFilename()} bytes=${size} ${size > 1000 ? "OK" : "SUSPICIOUS"}`)
+    } catch (err) {
+      const status = await page.getByText(/export failed|downloaded/i).first().innerText().catch(() => "n/a")
+      log(`EXPORT ${fmt}: FAILED (${err.message.split("\n")[0]}) status="${status}"`)
+    }
+  }
+}
+
+async function testShapes(page) {
+  const cases = [
+    { name: "small", w: 200, h: 120, cols: 3, rows: 2, expect: "small logo" },
+    { name: "portrait", w: 600, h: 900, cols: 2, rows: 3, expect: "portrait" },
+    { name: "large", w: 3000, h: 2000, cols: 6, rows: 4, expect: "large photo" },
+  ]
+  for (const c of cases) {
+    const file = await makeFixture2(c.name, c.w, c.h, c.cols, c.rows)
+    await page.getByLabel("Upload a session logo").setInputFiles(file)
+    await page.waitForTimeout(1600)
+    const open = await page.getByRole("dialog").isVisible().catch(() => false)
+    if (!open) { log(`SHAPE ${c.name} (${c.w}x${c.h}): dialog did not open`); continue }
+    const hint = await page.getByText(/Uploads at/).innerText().catch(() => "n/a")
+    const before = await box(page)
+    // Drag the SE corner far inward to probe the minimum-edge guard.
+    const se = page.locator('[aria-label^="Crop"]:not([aria-label^="Crop area"])').nth(4)
+    const hb = await se.boundingBox()
+    if (hb) {
+      await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(Math.max(2, hb.x - 400), Math.max(2, hb.y - 400), { steps: 10 })
+      await page.mouse.up()
+      await page.waitForTimeout(180)
+    }
+    const after = await box(page)
+    const held = after && after.width > 2 && after.height > 2
+    log(`SHAPE ${c.name} (${c.w}x${c.h}): start=${Math.round(before.width)}x${Math.round(before.height)} afterHardShrink=${Math.round(after.width)}x${Math.round(after.height)} minGuard=${held ? "OK" : "COLLAPSED"}`)
+    log(`  ${c.expect}: ${hint}`)
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.waitForTimeout(300)
+  }
 }
 
 const box = (page) => page.getByRole("application", { name: /crop area/i }).boundingBox()
@@ -223,6 +327,8 @@ async function main() {
     await page.screenshot({ path: `${OUT}/04-zoom.png` })
     await testKeyboardAndReset(page)
     await testConfirmAndPersist(page)
+    await testExportPath(page)
+    await testShapes(page)
   } catch (failure) {
     log("HARNESS FAILURE:", failure.message)
     await page.screenshot({ path: `${OUT}/99-failure.png` }).catch(() => {})
