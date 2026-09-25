@@ -125,46 +125,10 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
   const minEdgeForScale = (scale: number) => Math.max(1, Math.round(MIN_CROP_EDGE / (scale || 1)))
   const minEdge = minEdgeForScale(displayScale)
 
-  /**
-   * The part of the image the stage can actually show, in image pixels. The
-   * stage clips overflow, so while zoomed the crop is confined to the visible
-   * window and can never drift into a region the user cannot grab.
-   */
-  const visibleBoundsFor = useCallback(
-    (nextZoom: number) => {
-      const scale = fitScale * nextZoom
-      if (!stageSize.width || !stageSize.height || nextZoom <= 1) {
-        return { x: 0, y: 0, width: bounds.width, height: bounds.height }
-      }
-      const visibleWidth = Math.min(bounds.width, stageSize.width / scale)
-      const visibleHeight = Math.min(bounds.height, stageSize.height / scale)
-      return {
-        x: (bounds.width - visibleWidth) / 2,
-        y: (bounds.height - visibleHeight) / 2,
-        width: visibleWidth,
-        height: visibleHeight,
-      }
-    },
-    [bounds, fitScale, stageSize],
-  )
-
-  const visibleBounds = useMemo(() => visibleBoundsFor(zoom), [visibleBoundsFor, zoom])
-
-  /**
-   * Keeps the crop reachable after a zoom change WITHOUT resizing it. Shrinking
-   * the crop to fit a zoomed-in window silently destroyed the user's framing:
-   * zoom in and back out left a tiny crop that never recovered. When the crop is
-   * larger than the window it is simply aligned to the window and allowed to
-   * extend past it, which zooming out then reveals in full.
-   */
-  const keepReachable = useCallback(
-    (rect: CropRect, window: CropRect) => ({
-      ...rect,
-      x: Math.min(Math.max(rect.x, window.x), Math.max(window.x, window.x + window.width - rect.width)),
-      y: Math.min(Math.max(rect.y, window.y), Math.max(window.y, window.y + window.height - rect.height)),
-    }),
-    [],
-  )
+  // Zoom is magnification only. The crop is always bounded by the image itself,
+  // never by the currently visible window: capping it to the viewport made the
+  // whole image unselectable while zoomed in, and made Reset return a partial
+  // crop. Dragging stays clamped to the image so the selection is always valid.
 
   // Paint the decoded bitmap into the canvas whenever the display size changes.
   // Drawing from the bitmap avoids the object URL entirely, so the stage can
@@ -186,9 +150,10 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
   const resetCrop = useCallback(
     (nextAspect: number | null = aspect) => {
       if (!image) return
-      setCrop(fitAspectRect(nextAspect ?? image.width / image.height, visibleBounds, 1))
+      // Always the full image, whatever the zoom level.
+      setCrop(fitAspectRect(nextAspect ?? image.width / image.height, bounds, 1))
     },
-    [aspect, image, visibleBounds],
+    [aspect, bounds, image],
   )
 
   useEffect(() => {
@@ -210,11 +175,11 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       const delta = deltas[event.key]
       if (!delta) return
       event.preventDefault()
-      setCrop((current) => (current ? applyMoveDelta(current, delta[0], delta[1], visibleBounds) : current))
+      setCrop((current) => (current ? applyMoveDelta(current, delta[0], delta[1], bounds) : current))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [displayScale, onCancel, visibleBounds])
+  }, [bounds, displayScale, onCancel])
 
   useEffect(() => {
     const handleMove = (event: PointerEvent) => {
@@ -226,9 +191,9 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       setCrop(() => {
         const moved =
           drag.mode === "move"
-            ? applyMoveDelta(drag.startCrop, deltaX, deltaY, visibleBounds)
-            : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, visibleBounds, minEdge)
-        return aspect ? constrainToAspect(moved, aspect, visibleBounds, minEdge) : moved
+            ? applyMoveDelta(drag.startCrop, deltaX, deltaY, bounds)
+            : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, bounds, minEdge)
+        return aspect ? constrainToAspect(moved, aspect, bounds, minEdge) : moved
       })
     }
 
@@ -244,7 +209,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       window.removeEventListener("pointerup", stop)
       window.removeEventListener("pointercancel", stop)
     }
-  }, [aspect, displayScale, minEdge, visibleBounds])
+  }, [aspect, bounds, displayScale, minEdge])
 
   const startDrag = (event: React.PointerEvent, mode: "move" | CropHandle) => {
     if (!crop) return
@@ -357,7 +322,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                       aria-pressed={active}
                       onClick={() => {
                         setAspect(option.value)
-                        setCrop(constrainToAspect(crop, option.value, visibleBounds, minEdge))
+                        setCrop(constrainToAspect(crop, option.value, bounds, minEdge))
                       }}
                       className={`min-h-8 rounded-md border px-3 text-xs font-semibold transition ${active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-foreground hover:bg-muted"}`}
                     >
@@ -380,12 +345,8 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                   step={0.05}
                   value={zoom}
                   onChange={(event) => {
-                    const next = Number(event.target.value)
-                    setZoom(next)
-                    // Re-anchor the crop into the new visible window without
-                    // changing its size, so zooming never eats the selection.
-                    const nextVisible = visibleBoundsFor(next)
-                    setCrop((current) => (current ? keepReachable(current, nextVisible) : current))
+                    // Zoom never alters the selection; it only magnifies.
+                    setZoom(Number(event.target.value))
                   }}
                   className="h-2 min-w-0 flex-1 accent-primary"
                   aria-label="Zoom"
