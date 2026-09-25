@@ -123,6 +123,39 @@ describe("constrainToAspect", () => {
     const result = constrainToAspect(centre, 0.25, bounds)
     expect(result.width / result.height).toBeCloseTo(0.25)
   })
+
+  it("preserves the crop area instead of snapping to the largest rect", () => {
+    // A small crop must stay small when a ratio is chosen.
+    const small = { x: 100, y: 100, width: 100, height: 200 }
+    const result = constrainToAspect(small, 1, bounds)
+    expect(result.width / result.height).toBeCloseTo(1)
+    // Area 20000 -> 141.4 x 141.4, not the 500 x 500 max fit.
+    expect(result.width).toBeCloseTo(Math.sqrt(20000))
+    expect(result.width).toBeLessThan(200)
+  })
+
+  it("preserves area when locking an already-constrained crop", () => {
+    const wide = constrainToAspect(centre, 1, bounds)
+    const tall = constrainToAspect(wide, 0.5, bounds)
+    const wideArea = wide.width * wide.height
+    const tallArea = tall.width * tall.height
+    expect(tall.width / tall.height).toBeCloseTo(0.5)
+    expect(tallArea).toBeCloseTo(wideArea, -1)
+  })
+
+  it("never exceeds the image even when the minimum forces growth", () => {
+    const result = constrainToAspect({ x: 0, y: 0, width: 20, height: 20 }, 10, bounds, 24)
+    expect(result.x).toBeGreaterThanOrEqual(0)
+    expect(result.y).toBeGreaterThanOrEqual(0)
+    expect(result.x + result.width).toBeLessThanOrEqual(1000)
+    expect(result.y + result.height).toBeLessThanOrEqual(500)
+  })
+
+  it("keeps the crop centre fixed through a ratio change", () => {
+    const result = constrainToAspect({ x: 300, y: 150, width: 120, height: 90 }, 1, bounds)
+    expect(result.x + result.width / 2).toBeCloseTo(360)
+    expect(result.y + result.height / 2).toBeCloseTo(195)
+  })
 })
 
 describe("fitAspectRect", () => {

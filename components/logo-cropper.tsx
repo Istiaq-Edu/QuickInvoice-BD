@@ -12,11 +12,15 @@ import {
   loadImageFile,
   MAX_LOGO_EDGE,
   MIN_CROP_EDGE,
+  normalizeCropRect,
   renderCropToFile,
   type CropHandle,
   type CropRect,
   type ImageBounds,
 } from "@/lib/image/crop"
+
+/** Room around the image so crop handles on the border stay grabbable. */
+const STAGE_MARGIN = 20
 
 const ASPECTS: Array<{ label: string; value: number | null }> = [
   { label: "Free", value: null },
@@ -96,36 +100,65 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
     return () => observer.disconnect()
   }, [image])
 
+  // The crop handles straddle the box edge, so keep a margin around the image
+  // or handles sitting on the image border get clipped by the stage.
   const fitScale = useMemo(() => {
     if (!image || !stageSize.width || !stageSize.height) return 1
-    return Math.min(stageSize.width / image.naturalWidth, stageSize.height / image.naturalHeight)
+    const usableWidth = Math.max(1, stageSize.width - STAGE_MARGIN * 2)
+    const usableHeight = Math.max(1, stageSize.height - STAGE_MARGIN * 2)
+    return Math.min(usableWidth / image.naturalWidth, usableHeight / image.naturalHeight)
   }, [image, stageSize])
 
   const displayScale = fitScale * zoom
   const displayWidth = image ? image.naturalWidth * displayScale : 0
   const displayHeight = image ? image.naturalHeight * displayScale : 0
 
-  // A comfortable minimum grab size, expressed in image pixels.
-  const minEdge = Math.max(16, Math.round(MIN_CROP_EDGE / (displayScale || 1)))
+  // Minimum grab size is defined on screen, then converted to image pixels. A
+  // hard floor in image pixels would make small logos impossible to crop finely.
+  const minEdgeForScale = (scale: number) => Math.max(1, Math.round(MIN_CROP_EDGE / (scale || 1)))
+  const minEdge = minEdgeForScale(displayScale)
+
+  /**
+   * The part of the image the stage can actually show, in image pixels. The
+   * stage clips overflow, so while zoomed the crop is confined to the visible
+   * window and can never drift into a region the user cannot grab.
+   */
+  const visibleBoundsFor = useCallback(
+    (nextZoom: number) => {
+      const scale = fitScale * nextZoom
+      if (!stageSize.width || !stageSize.height || nextZoom <= 1) return bounds
+      const visibleWidth = Math.min(bounds.width, stageSize.width / scale)
+      const visibleHeight = Math.min(bounds.height, stageSize.height / scale)
+      return {
+        x: (bounds.width - visibleWidth) / 2,
+        y: (bounds.height - visibleHeight) / 2,
+        width: visibleWidth,
+        height: visibleHeight,
+      }
+    },
+    [bounds, fitScale, stageSize],
+  )
+
+  const visibleBounds = useMemo(() => visibleBoundsFor(zoom), [visibleBoundsFor, zoom])
 
   const resetCrop = useCallback(
     (nextAspect: number | null = aspect) => {
       if (!image) return
-      const base = fitAspectRect(nextAspect ?? image.naturalWidth / image.naturalHeight, bounds, 0.92)
-      setCrop(base)
+      setCrop(fitAspectRect(nextAspect ?? image.naturalWidth / image.naturalHeight, visibleBounds, 0.92))
     },
-    [aspect, bounds, image],
+    [aspect, image, visibleBounds],
   )
 
   useEffect(() => {
-    if (!crop) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault()
         onCancel()
         return
       }
-      const step = event.shiftKey ? 40 : 8
+      // Arrow steps are screen pixels, so convert before applying them to the
+      // crop; otherwise a large photo barely moves under an 8px key press.
+      const step = (event.shiftKey ? 40 : 8) / (displayScale || 1)
       const deltas: Record<string, [number, number]> = {
         ArrowLeft: [-step, 0],
         ArrowRight: [step, 0],
@@ -135,15 +168,13 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       const delta = deltas[event.key]
       if (!delta) return
       event.preventDefault()
-      setCrop((current) => (current ? applyMoveDelta(current, delta[0], delta[1], bounds) : current))
+      setCrop((current) => (current ? applyMoveDelta(current, delta[0], delta[1], visibleBounds) : current))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [bounds, crop, onCancel])
+  }, [displayScale, onCancel, visibleBounds])
 
   useEffect(() => {
-    if (!crop || !image) return
-
     const handleMove = (event: PointerEvent) => {
       const drag = dragRef.current
       if (!drag) return
@@ -153,9 +184,9 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       setCrop(() => {
         const moved =
           drag.mode === "move"
-            ? applyMoveDelta(drag.startCrop, deltaX, deltaY, bounds)
-            : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, bounds, minEdge)
-        return aspect ? constrainToAspect(moved, aspect, bounds, minEdge) : moved
+            ? applyMoveDelta(drag.startCrop, deltaX, deltaY, visibleBounds)
+            : applyHandleDelta(drag.startCrop, drag.mode, deltaX, deltaY, visibleBounds, minEdge)
+        return aspect ? constrainToAspect(moved, aspect, visibleBounds, minEdge) : moved
       })
     }
 
@@ -171,7 +202,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
       window.removeEventListener("pointerup", stop)
       window.removeEventListener("pointercancel", stop)
     }
-  }, [aspect, bounds, crop, displayScale, image, minEdge])
+  }, [aspect, displayScale, minEdge, visibleBounds])
 
   const startDrag = (event: React.PointerEvent, mode: "move" | CropHandle) => {
     if (!crop) return
@@ -260,7 +291,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                   <div
                     key={handle.id}
                     aria-label={handle.label}
-                    className={`absolute z-10 size-4 rounded-full border-2 border-white bg-primary shadow-md ${handle.className}`}
+                    className={`absolute z-10 size-4 rounded-full border-2 border-white bg-primary shadow-md after:absolute after:-inset-2 after:content-[''] ${handle.className}`}
                     style={{ cursor: handle.cursor, touchAction: "none" }}
                     onPointerDown={(event) => startDrag(event, handle.id)}
                   />
@@ -280,7 +311,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                       aria-pressed={active}
                       onClick={() => {
                         setAspect(option.value)
-                        setCrop(constrainToAspect(crop, option.value, bounds, minEdge))
+                        setCrop(constrainToAspect(crop, option.value, visibleBounds, minEdge))
                       }}
                       className={`min-h-8 rounded-md border px-3 text-xs font-semibold transition ${active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-foreground hover:bg-muted"}`}
                     >
@@ -302,7 +333,14 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                   max={4}
                   step={0.05}
                   value={zoom}
-                  onChange={(event) => setZoom(Number(event.target.value))}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    setZoom(next)
+                    // Zooming changes which part of the image is reachable, so
+                    // pull the crop back into the new visible window.
+                    const nextVisible = visibleBoundsFor(next)
+                    setCrop((current) => (current ? normalizeCropRect(current, nextVisible, minEdgeForScale(fitScale * next)) : current))
+                  }}
                   className="h-2 min-w-0 flex-1 accent-primary"
                   aria-label="Zoom"
                 />

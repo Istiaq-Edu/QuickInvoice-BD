@@ -77,32 +77,40 @@ export function applyMoveDelta(start: CropRect, deltaX: number, deltaY: number, 
 }
 
 /**
- * Locks the crop to a target width/height ratio while preserving area. The
- * rect is scaled around its centre, then re-clamped, so a ratio can never push
- * the crop outside the source image.
+ * Locks the crop to a target width/height ratio while preserving its area, so
+ * choosing a preset reshapes the current crop instead of snapping it to the
+ * largest rectangle of that shape. The rect is scaled around its centre and
+ * re-clamped, so a ratio can never push the crop outside the source image.
  */
 export function constrainToAspect(rect: CropRect, aspect: number | null, bounds: ImageBounds, minEdge = MIN_CROP_EDGE): CropRect {
   if (!aspect || !Number.isFinite(aspect) || aspect <= 0) return normalizeCropRect(rect, bounds, minEdge)
 
   const minWidth = Math.min(minEdge, bounds.width)
   const minHeight = Math.min(minEdge, bounds.height)
-  const maxWidth = bounds.width
-  const maxHeight = bounds.height
 
-  // Largest rect with this ratio that still fits the image.
-  let width = Math.min(maxWidth, maxHeight * aspect)
+  const area = Math.max(1, rect.width * rect.height)
+  let width = Math.sqrt(area * aspect)
   let height = width / aspect
-  if (height > maxHeight) {
-    height = maxHeight
+
+  // Shrink to fit the image while holding the ratio.
+  let shrink = Math.max(1, width / bounds.width, height / bounds.height)
+  width /= shrink
+  height /= shrink
+
+  // Grow back if the minimum grab size demands it, still holding the ratio.
+  if (width < minWidth) {
+    width = minWidth
+    height = width / aspect
+  }
+  if (height < minHeight) {
+    height = minHeight
     width = height * aspect
   }
-  width = Math.max(width, minWidth)
-  height = width / aspect
-  if (height > maxHeight) {
-    height = maxHeight
-    width = height * aspect
-  }
-  height = Math.max(height, minHeight)
+
+  // The minimum can push the rect past the image; clamp once more.
+  shrink = Math.max(1, width / bounds.width, height / bounds.height)
+  width /= shrink
+  height /= shrink
 
   const centreX = rect.x + rect.width / 2
   const centreY = rect.y + rect.height / 2
