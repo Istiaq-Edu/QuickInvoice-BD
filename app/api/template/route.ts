@@ -8,6 +8,7 @@ export const defaultTemplateSettings = {
   showSellerContact: true,
   showBuyerContact: true,
   showNotes: true,
+  showQuantityColumn: true,
 }
 
 const templateSchema = z.object({
@@ -16,6 +17,7 @@ const templateSchema = z.object({
   showSellerContact: z.boolean(),
   showBuyerContact: z.boolean(),
   showNotes: z.boolean(),
+  showQuantityColumn: z.boolean().default(true),
 })
 
 async function getWorkspaceId(supabase: NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>, userId: string) {
@@ -47,8 +49,8 @@ export async function PUT(request: Request) {
 
   const parsed = templateSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: "Template settings are invalid." }, { status: 400 })
-  const settings = { schemaVersion: 1, ...parsed.data }
-  const { error } = await supabase.from("templates").upsert({ workspace_id: workspaceId, schema_version: 1, settings, updated_at: new Date().toISOString() }, { onConflict: "workspace_id" })
+  const settings = { schemaVersion: 2, ...parsed.data }
+  const { error } = await supabase.from("templates").upsert({ workspace_id: workspaceId, schema_version: 2, settings, updated_at: new Date().toISOString() }, { onConflict: "workspace_id" })
   if (error) return NextResponse.json({ error: "Template settings could not be saved." }, { status: 500 })
   return NextResponse.json({ success: true, settings: parsed.data })
 }

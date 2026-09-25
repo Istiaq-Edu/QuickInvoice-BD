@@ -8,6 +8,7 @@ export type TemplateSettings = {
   showSellerContact: boolean
   showBuyerContact: boolean
   showNotes: boolean
+  showQuantityColumn: boolean
 }
 
 export type InvoiceLine = {
@@ -15,6 +16,8 @@ export type InvoiceLine = {
   description: string
   quantity: number
   unitPrice: number
+  discountType?: DiscountType
+  discountValue?: number
 }
 
 export type InvoiceDraft = {
@@ -35,6 +38,7 @@ export type InvoiceDraft = {
   discountValue: number
   paymentStatus: PaymentStatus
   templateSettings?: TemplateSettings
+  logoAssetId?: string | null
   notes?: string
   paymentTerms?: string
   lines: InvoiceLine[]

@@ -9,6 +9,7 @@ export const templateSettingsSchema = z.object({
   showSellerContact: z.boolean(),
   showBuyerContact: z.boolean(),
   showNotes: z.boolean(),
+  showQuantityColumn: z.boolean().default(true),
 })
 
 export const invoiceLineSchema = z.object({
@@ -16,6 +17,15 @@ export const invoiceLineSchema = z.object({
   description: z.string().trim().min(1, "Description is required").max(2_000),
   quantity: z.number().int().min(1),
   unitPrice: integerAmount,
+  discountType: z.enum(["none", "fixed", "percentage"]).default("none"),
+  discountValue: integerAmount.default(0),
+}).superRefine((line, context) => {
+  if (line.discountType === "percentage" && line.discountValue > 100) {
+    context.addIssue({ code: "custom", path: ["discountValue"], message: "Line discount cannot exceed 100%." })
+  }
+  if (line.discountType === "fixed" && line.discountValue > line.quantity * line.unitPrice) {
+    context.addIssue({ code: "custom", path: ["discountValue"], message: "Line discount cannot exceed the original amount." })
+  }
 })
 
 const invoiceCommonFields = {
@@ -35,6 +45,7 @@ const invoiceCommonFields = {
   discountType: z.enum(["none", "fixed", "percentage"]),
   paymentStatus: z.enum(["unpaid", "paid", "overdue"]),
   templateSettings: templateSettingsSchema.optional(),
+  logoAssetId: z.string().uuid().nullable().optional(),
   notes: optionalText,
   paymentTerms: optionalText,
 }
@@ -44,6 +55,15 @@ const invoiceDraftLineSchema = z.object({
   description: z.string().trim().max(2_000).default(""),
   quantity: z.union([z.literal(""), z.number().int().min(1)]),
   unitPrice: z.union([z.literal(""), integerAmount]),
+  discountType: z.enum(["none", "fixed", "percentage"]).default("none"),
+  discountValue: z.union([z.literal(""), integerAmount]).default(0),
+}).superRefine((line, context) => {
+  if (line.discountType === "percentage" && typeof line.discountValue === "number" && line.discountValue > 100) {
+    context.addIssue({ code: "custom", path: ["discountValue"], message: "Line discount cannot exceed 100%." })
+  }
+  if (line.discountType === "fixed" && typeof line.discountValue === "number" && typeof line.quantity === "number" && typeof line.unitPrice === "number" && line.discountValue > line.quantity * line.unitPrice) {
+    context.addIssue({ code: "custom", path: ["discountValue"], message: "Line discount cannot exceed the original amount." })
+  }
 })
 
 export const invoiceDraftSchema = z.object({
@@ -70,13 +90,30 @@ export const invoiceDraftSaveSchema = z.object({
   }
 })
 
+export function calculateLineTotals(line: Pick<InvoiceDraft["lines"][number], "quantity" | "unitPrice" | "discountType" | "discountValue">) {
+  const originalAmount = line.quantity * line.unitPrice
+  const discountType = line.discountType ?? "none"
+  const discountValue = line.discountValue ?? 0
+  const discountAmount = discountType === "fixed"
+    ? Math.min(originalAmount, discountValue)
+    : discountType === "percentage"
+      ? Math.round((originalAmount * Math.min(100, discountValue)) / 100)
+      : 0
+  return { originalAmount, discountAmount, amount: Math.max(0, originalAmount - discountAmount) }
+}
+
 export function calculateTotals(invoice: Pick<InvoiceDraft, "discountType" | "discountValue" | "lines">): InvoiceTotals {
-  const subtotal = invoice.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0)
-  const discountAmount = invoice.discountType === "fixed"
+  const lineTotals = invoice.lines.map(calculateLineTotals)
+  const subtotal = lineTotals.reduce((sum, line) => sum + line.originalAmount, 0)
+  const hasLineDiscount = invoice.lines.some((line) => (line.discountType ?? "none") !== "none" || (line.discountValue ?? 0) > 0)
+  const legacyDiscountAmount = invoice.discountType === "fixed"
     ? Math.min(subtotal, invoice.discountValue)
     : invoice.discountType === "percentage"
       ? Math.round((subtotal * Math.min(100, invoice.discountValue)) / 100)
       : 0
+  const discountAmount = hasLineDiscount
+    ? lineTotals.reduce((sum, line) => sum + line.discountAmount, 0)
+    : legacyDiscountAmount
 
   return { subtotal, discountAmount, total: Math.max(0, subtotal - discountAmount) }
 }

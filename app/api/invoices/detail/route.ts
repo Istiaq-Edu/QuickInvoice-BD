@@ -23,9 +23,13 @@ export async function GET(request: Request) {
   if (error || !data) return NextResponse.json({ error: "Invoice could not be loaded." }, { status: 404 })
   if (!["draft", "finalized"].includes(data.lifecycle_status)) return NextResponse.json({ error: "Trashed invoices cannot be opened in the editor." }, { status: 409 })
 
+  const canonicalLogoAssetId = data.canonical_document && typeof data.canonical_document === "object" && typeof data.canonical_document.logoAssetId === "string"
+    ? data.canonical_document.logoAssetId
+    : null
+  const logoAssetId = data.lifecycle_status === "finalized" ? data.logo_asset_id_snapshot : canonicalLogoAssetId
   let logoUrl: string | null = null
-  if (data.lifecycle_status === "finalized" && data.logo_asset_id_snapshot) {
-    const { data: asset } = await supabase.from("logo_assets").select("storage_path").eq("id", data.logo_asset_id_snapshot).single()
+  if (logoAssetId) {
+    const { data: asset } = await supabase.from("logo_assets").select("storage_path").eq("id", logoAssetId).is("deleted_at", null).maybeSingle()
     if (asset?.storage_path) {
       const { data: signed } = await supabase.storage.from("seller-logos").createSignedUrl(asset.storage_path, 3600)
       logoUrl = signed?.signedUrl ?? null
@@ -36,6 +40,7 @@ export async function GET(request: Request) {
     id: data.id,
     invoiceNumber: data.invoice_number,
     lifecycleStatus: data.lifecycle_status,
+    logoAssetId,
     logoUrl,
     version: data.version,
     document: data.canonical_document,

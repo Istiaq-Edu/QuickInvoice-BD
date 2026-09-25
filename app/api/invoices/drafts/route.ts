@@ -25,6 +25,8 @@ export async function POST(request: Request) {
       description: line.description,
       quantity: typeof line.quantity === "number" ? line.quantity : 1,
       unitPrice: typeof line.unitPrice === "number" ? line.unitPrice : 0,
+      discountType: line.discountType ?? "none",
+      discountValue: typeof line.discountValue === "number" ? line.discountValue : 0,
     })),
   }
   const totals = calculateTotals(normalizedInvoice)

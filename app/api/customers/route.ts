@@ -8,7 +8,7 @@ const customerSchema = z.object({
   address: z.string().trim().max(2_000),
   email: z.string().trim().email().or(z.literal("")),
   phone: z.string().trim().max(100),
-  website: z.string().trim().url().or(z.literal("")),
+  website: z.string().trim().url().or(z.literal("")).optional(),
 })
 const idSchema = z.string().uuid()
 
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   const { data, error } = await context.supabase.from("customers").select("id, company_name, name, address_text, email, phone, website, updated_at").is("deleted_at", null).order("updated_at", { ascending: false })
   if (error) return NextResponse.json({ error: "Customers could not be loaded." }, { status: 500 })
   const customers = (data ?? []).filter((customer) => !query || [customer.company_name, customer.name, customer.email, customer.phone].some((value) => value.toLowerCase().includes(query)))
-  return NextResponse.json({ customers: customers.map(mapCustomer) })
+  return NextResponse.json({ customers: customers.map(mapCustomer) }, { headers: { "cache-control": "no-store" } })
 }
 
 export async function POST(request: Request) {
@@ -53,15 +53,37 @@ export async function POST(request: Request) {
   if (context.error) return context.error
   const parsed = customerSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: "Customer data is invalid." }, { status: 400 })
-  const { data, error } = await context.supabase.from("customers").insert({
-    workspace_id: context.workspaceId,
+  const customerValues = {
     company_name: parsed.data.companyName,
     name: parsed.data.name,
     address_text: parsed.data.address,
     email: parsed.data.email,
     phone: parsed.data.phone,
-    website: parsed.data.website,
-  }).select("id, company_name, name, address_text, email, phone, website, updated_at").single()
+  }
+  const website = parsed.data.website
+  const { data: existing, error: existingError } = await context.supabase
+    .from("customers")
+    .select("id")
+    .eq("workspace_id", context.workspaceId)
+    .eq("company_name", customerValues.company_name)
+    .eq("name", customerValues.name)
+    .is("deleted_at", null)
+    .maybeSingle()
+  if (existingError) return NextResponse.json({ error: "Customer could not be saved." }, { status: 500 })
+
+  if (existing?.id) {
+    const { data, error } = await context.supabase
+      .from("customers")
+      .update({ ...customerValues, ...(website !== undefined ? { website } : {}), updated_at: new Date().toISOString() })
+      .eq("id", existing.id)
+      .eq("workspace_id", context.workspaceId)
+      .select("id, company_name, name, address_text, email, phone, website, updated_at")
+      .single()
+    if (error || !data) return NextResponse.json({ error: "Customer could not be saved." }, { status: 500 })
+    return NextResponse.json({ customer: mapCustomer(data) })
+  }
+
+  const { data, error } = await context.supabase.from("customers").insert({ workspace_id: context.workspaceId, ...customerValues, website: website ?? "" }).select("id, company_name, name, address_text, email, phone, website, updated_at").single()
   if (error || !data) return NextResponse.json({ error: "Customer could not be created." }, { status: 500 })
   return NextResponse.json({ customer: mapCustomer(data) }, { status: 201 })
 }
@@ -79,7 +101,7 @@ export async function PATCH(request: Request) {
     address_text: parsed.data.address,
     email: parsed.data.email,
     phone: parsed.data.phone,
-    website: parsed.data.website,
+    ...(parsed.data.website !== undefined ? { website: parsed.data.website } : {}),
     updated_at: new Date().toISOString(),
   }).eq("id", id.data).eq("workspace_id", context.workspaceId).is("deleted_at", null).select("id, company_name, name, address_text, email, phone, website, updated_at").single()
   if (error || !data) return NextResponse.json({ error: "Customer could not be updated." }, { status: 404 })

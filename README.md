@@ -43,7 +43,36 @@ Apply the migration to a private Singapore Supabase project before enabling beta
 
 ## Validation
 
+The default unit/security suite is non-watch and includes the invoice validation tests. Supabase tests are skipped unless the explicit `SUPABASE_TEST_*` variables are present; use a dedicated test account and the publishable key, never a service-role key.
+
 ```bash
+npm run test:unit
+npm run test
 npm run lint
 npm run build
 ```
+
+Playwright starts a local Next.js dev server automatically. Install the browser once, then run the guest homepage and export checks:
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+The E2E suite clearly skips when Chromium is not installed. The export test completes a guest invoice and asserts that both PDF and DOCX downloads are emitted.
+
+To run the Supabase API security checks against an explicitly configured test project, set `SUPABASE_TEST_URL`, `SUPABASE_TEST_PUBLISHABLE_KEY`, `SUPABASE_TEST_EMAIL`, and `SUPABASE_TEST_PASSWORD`, then run:
+
+```bash
+npm run test:supabase
+```
+
+The non-destructive SQL fixture can be run only with both `SUPABASE_SQL_SMOKE=1` and `SUPABASE_DB_URL` explicitly set, plus the PostgreSQL `psql` client on `PATH`:
+
+```powershell
+$env:SUPABASE_SQL_SMOKE = "1"
+$env:SUPABASE_DB_URL = "<test-database-url>"
+npm run test:supabase:sql
+```
+
+No test fixture contains credentials, and neither Supabase test command runs against a project unless its opt-in environment variables are supplied.
