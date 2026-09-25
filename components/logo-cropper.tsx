@@ -83,7 +83,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
         setImage(loaded)
         // Seed the crop from the image's own shape so the first frame is valid
         // without a follow-up effect that would trigger a cascading render.
-        setCrop(fitAspectRect(loaded.width / loaded.height, { width: loaded.width, height: loaded.height }, 0.92))
+        setCrop(fitAspectRect(loaded.width / loaded.height, { width: loaded.width, height: loaded.height }, 1))
       })
       .catch((loadFailure: unknown) => {
         if (active) setLoadError(loadFailure instanceof Error ? loadFailure.message : "That image could not be read.")
@@ -186,7 +186,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
   const resetCrop = useCallback(
     (nextAspect: number | null = aspect) => {
       if (!image) return
-      setCrop(fitAspectRect(nextAspect ?? image.width / image.height, visibleBounds, 0.92))
+      setCrop(fitAspectRect(nextAspect ?? image.width / image.height, visibleBounds, 1))
     },
     [aspect, image, visibleBounds],
   )

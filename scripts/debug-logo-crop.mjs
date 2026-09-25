@@ -136,6 +136,70 @@ async function testShapes(page) {
   }
 }
 
+// Can the crop be expanded to cover the whole image? Compare the crop box
+// against the painted canvas, which is exactly the full image area.
+async function testFullArea(page) {
+  await page.getByRole("button", { name: "Reset" }).click()
+  await page.waitForTimeout(250)
+  const start = await box(page)
+  const canvas = await page.locator("canvas[aria-label='Image being cropped']").boundingBox()
+  log(`FULL AREA: start=${Math.round(start.width)}x${Math.round(start.height)} image=${Math.round(canvas.width)}x${Math.round(canvas.height)} (start is ${Math.round((start.width / canvas.width) * 100)}% of width)`)
+
+  const handles = page.locator('[aria-label^="Crop"]:not([aria-label^="Crop area"])')
+  // nw = 0, se = 4. Drag both far outward; clamps should stop at the image edge.
+  for (const [idx, label, dx, dy] of [[0, "nw", -600, -600], [4, "se", 600, 600]]) {
+    const h = handles.nth(idx)
+    const hb = await h.boundingBox()
+    if (!hb) { log(`FULL AREA ${label}: no box`); continue }
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(hb.x + hb.width / 2 + dx, hb.y + hb.height / 2 + dy, { steps: 12 })
+    await page.mouse.up()
+    await page.waitForTimeout(200)
+    const b = await box(page)
+    log(`FULL AREA after ${label} drag: ${Math.round(b.width)}x${Math.round(b.height)} at (${Math.round(b.x)},${Math.round(b.y)})`)
+  }
+
+  const finalBox = await box(page)
+  const finalCanvas = await page.locator("canvas[aria-label='Image being cropped']").boundingBox()
+  const dw = Math.round(finalBox.width - finalCanvas.width)
+  const dh = Math.round(finalBox.height - finalCanvas.height)
+  const covers = Math.abs(dw) <= 3 && Math.abs(dh) <= 3
+  log(`FULL AREA result: crop=${Math.round(finalBox.width)}x${Math.round(finalBox.height)} vs image=${Math.round(finalCanvas.width)}x${Math.round(finalCanvas.height)} shortfall=${dw}x${dh} ${covers ? "FULL AREA REACHABLE" : "CANNOT REACH FULL AREA"}`)
+
+  // With the crop filling the image, every handle sits on the image edge, so
+  // they must still be grabbable and must still shrink on an inward drag.
+  await page.getByRole("button", { name: "Reset" }).click()
+  await page.waitForTimeout(250)
+  const resetBox = await box(page)
+  const resetCanvas = await page.locator("canvas[aria-label='Image being cropped']").boundingBox()
+  log(`RESET is full image: ${Math.abs(Math.round(resetBox.width - resetCanvas.width)) <= 3 && Math.abs(Math.round(resetBox.height - resetCanvas.height)) <= 3 ? "YES" : "NO"} (${Math.round(resetBox.width)}x${Math.round(resetBox.height)} vs ${Math.round(resetCanvas.width)}x${Math.round(resetCanvas.height)})`)
+
+  const grab = []
+  for (let i = 0; i < 8; i++) {
+    const h = handles.nth(i)
+    const label = await h.getAttribute("aria-label")
+    const hb = await h.boundingBox()
+    if (!hb) { grab.push(`${label}:NO BOX`); continue }
+    const cx = hb.x + hb.width / 2
+    const cy = hb.y + hb.height / 2
+    const hit = await describeAt(page, cx, cy)
+    const b4 = await box(page)
+    // Inward: toward the centre of the crop.
+    const dx = cx < b4.x + b4.width / 2 ? 30 : -30
+    const dy = cy < b4.y + b4.height / 2 ? 30 : -30
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(cx + dx, cy + dy, { steps: 6 })
+    await page.mouse.up()
+    await page.waitForTimeout(130)
+    const af = await box(page)
+    const changed = Math.abs(af.width - b4.width) > 2 || Math.abs(af.height - b4.height) > 2
+    grab.push(`${String(label).replace("Crop ", "")}:${hit.includes("aria-label") ? "hit" : "BLOCKED"}/${changed ? "shrinks" : "noChange"}`)
+  }
+  log("GRABBABLE AT FULL AREA: " + grab.join("  "))
+}
+
 const box = (page) => page.getByRole("application", { name: /crop area/i }).boundingBox()
 
 async function describeAt(page, x, y) {
@@ -196,11 +260,24 @@ async function testHandles(page) {
   log("HANDLE DRAG RESULTS (inward):\n  " + results.join("\n  "))
 }
 
-async function testMove(page) {
-  // Reset first: after the handle tests the crop is pinned in a corner, so an
-  // outward drag would legitimately clamp to zero.
+// Shrink the crop so there is room to move it; at full area a move is
+// correctly clamped to zero and the test would prove nothing.
+async function shrinkFirst(page) {
   await page.getByRole("button", { name: "Reset" }).click()
-  await page.waitForTimeout(150)
+  await page.waitForTimeout(200)
+  const se = page.locator('[aria-label^="Crop"]:not([aria-label^="Crop area"])').nth(4)
+  const hb = await se.boundingBox()
+  if (!hb) return
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(hb.x - 60, hb.y - 40, { steps: 8 })
+  await page.mouse.up()
+  await page.waitForTimeout(180)
+  return box(page)
+}
+
+async function testMove(page) {
+  await shrinkFirst(page)
   const before = await box(page)
   const c = { x: before.x + before.width / 2, y: before.y + before.height / 2 }
   const hit = await describeAt(page, c.x, c.y)
@@ -255,10 +332,9 @@ async function testZoom(page) {
 
 
 async function testKeyboardAndReset(page) {
-  // Reset first: after the zoom test the crop sits flush against the image
-  // edge, where an outward nudge is correctly clamped to zero.
-  await page.getByRole("button", { name: "Reset" }).click()
-  await page.waitForTimeout(200)
+  // Shrink first: the default crop is now the full image, where an outward
+  // nudge is correctly clamped to zero and would prove nothing.
+  await shrinkFirst(page)
   const before = await box(page)
   await page.getByRole("application", { name: /crop area/i }).focus()
   await page.keyboard.press("ArrowRight")
@@ -326,6 +402,7 @@ async function main() {
     await testZoom(page)
     await page.screenshot({ path: `${OUT}/04-zoom.png` })
     await testKeyboardAndReset(page)
+    await testFullArea(page)
     await testConfirmAndPersist(page)
     await testExportPath(page)
     await testShapes(page)
