@@ -1,29 +1,21 @@
 # QuickInvoice-BD
 
-A Bangladesh-focused invoice workspace for creating, managing, and exporting professional invoices. The app supports guest invoices, authenticated workspaces, live A4 previews, reusable customer/item data, and secure server-side administration.
+A Bangladesh-focused invoice editor with guest mode, authenticated workspaces, and PDF/DOCX export.
 
 **Production:** [quickinvoice-bd.vercel.app](https://quickinvoice-bd.vercel.app)
 
 ## Features
 
-- Responsive invoice editor with live A4 portrait preview
-- BDT whole-number calculations with fixed and percentage discounts
-- Seller, customer, line-item, notes, and template controls
-- PDF and DOCX exports
-- Email/password authentication with private workspace data
-- Draft autosave, finalization, history, revision, payment status, and trash workflows
-- Saved customers, reusable items, and note templates
-- Seller profile and private logo management
-- Supabase row-level security, admin allowlist, and server-only account purge workflows
+- Invoice editor with live A4 preview, BDT totals, discounts, and template controls
+- PDF and DOCX export
+- Authenticated drafts, history, revisions, payment status, and trash
+- Customer directory, seller profile, and private logo storage
+- Saved items and note templates
+- Supabase RLS, role-gated administration, and server-only account purge APIs
 
 ## Stack
 
-- Next.js 16 and React 19
-- TypeScript
-- Tailwind CSS 4 and shadcn/ui
-- Supabase Auth, PostgreSQL, Storage, and RLS
-- Vitest and Playwright
-- Vercel hosting
+Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui · Supabase · Vitest · Playwright · Vercel
 
 ## Local development
 
@@ -31,7 +23,7 @@ A Bangladesh-focused invoice workspace for creating, managing, and exporting pro
 
 - Node.js 20+
 - npm
-- A Supabase project for authentication and persistence
+- Supabase project for authentication and cloud persistence (optional for guest mode)
 
 ### Setup
 
@@ -45,9 +37,9 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Guest invoice creation and exports work without Supabase configuration. Authentication, cloud persistence, saved libraries, and admin features require the environment variables below.
+Guest invoices and exports work without Supabase configuration. Authentication, saved data, and admin features require the variables below.
 
-## Environment variables
+## Environment
 
 Create `.env.local` from `.env.example`:
 
@@ -58,15 +50,13 @@ SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never expose it through a `NEXT_PUBLIC_` variable or commit it to the repository. The account-purge worker also requires a private `CRON_SECRET` in the deployment environment.
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `NEXT_PUBLIC_` or commit it. The account-purge worker also requires a private `CRON_SECRET` in the deployment environment.
 
 ## Database
 
-Apply the SQL migrations in `supabase/migrations` in numerical order, through `0026_fix_line_discount_rpc.sql`, before enabling authenticated beta features. The migrations define the invoice lifecycle, workspace isolation, saved libraries, seller branding, line-item discounts, and administrative workflows.
+Apply the SQL files in `supabase/migrations` in numerical order through `0026_fix_line_discount_rpc.sql`. They define the invoice lifecycle, workspace isolation, saved libraries, seller branding, line-item discounts, and administrative workflows.
 
 ## Validation
-
-Run the standard checks before publishing:
 
 ```bash
 npm run lint
@@ -74,30 +64,30 @@ npm test
 npm run build
 ```
 
-Install the Playwright browser once, then run the end-to-end suite:
+For browser tests, install Chromium once and run:
 
 ```bash
 npx playwright install chromium
 npm run test:e2e
 ```
 
-The default test command skips Supabase integration tests unless the explicit test environment variables are configured. No test or migration file contains production credentials.
+Supabase integration tests are opt-in and require their dedicated test environment variables. No test or migration file contains production credentials.
 
 ## Deployment
 
-The repository is connected to Vercel through GitHub. A push to `main` automatically creates a production deployment at:
+The repository is connected to Vercel through GitHub. Pushes to `main` automatically deploy to production:
 
 [https://quickinvoice-bd.vercel.app](https://quickinvoice-bd.vercel.app)
 
-Before the first authenticated deployment, configure the Supabase variables in Vercel and apply all migrations through `0026`. Branches other than `main` create preview deployments.
+Other branches create preview deployments. Before enabling authenticated features, configure the Supabase variables in Vercel and apply all migrations through `0026`.
 
-## Project structure
+## Structure
 
 ```text
-app/                 Next.js routes, pages, and API handlers
+app/                 Pages, routes, and API handlers
 components/          Shared UI and workspace components
 lib/                 Invoice, export, and Supabase utilities
-supabase/migrations/ Database schema, RLS, and RPC migrations
+supabase/migrations/ Schema, RLS, and RPC migrations
 tests/               Unit, Supabase, and Playwright tests
 scripts/             Local visual QA helpers
 ```
