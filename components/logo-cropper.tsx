@@ -12,8 +12,8 @@ import {
   loadImageFile,
   MAX_LOGO_EDGE,
   MIN_CROP_EDGE,
-  normalizeCropRect,
   renderCropToFile,
+  type DecodedImage,
   type CropHandle,
   type CropRect,
   type ImageBounds,
@@ -51,7 +51,7 @@ type LogoCropperProps = {
 }
 
 export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
-  const [image, setImage] = useState<HTMLImageElement | null>(null)
+  const [image, setImage] = useState<DecodedImage | null>(null)
   const [loadError, setLoadError] = useState("")
   const [crop, setCrop] = useState<CropRect | null>(null)
   const [aspect, setAspect] = useState<number | null>(null)
@@ -61,30 +61,37 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
   const [error, setError] = useState("")
 
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const titleId = useId()
 
   const bounds: ImageBounds = useMemo(
-    () => ({ width: image?.naturalWidth ?? 1, height: image?.naturalHeight ?? 1 }),
+    () => ({ width: image?.width ?? 1, height: image?.height ?? 1 }),
     [image],
   )
 
   useEffect(() => {
     let active = true
+    let decoded: DecodedImage | null = null
     loadImageFile(file)
       .then((loaded) => {
-        if (!active) return
+        if (!active) {
+          loaded.close()
+          return
+        }
+        decoded = loaded
         setImage(loaded)
         // Seed the crop from the image's own shape so the first frame is valid
         // without a follow-up effect that would trigger a cascading render.
-        const natural = { width: loaded.naturalWidth, height: loaded.naturalHeight }
-        setCrop(fitAspectRect(loaded.naturalWidth / loaded.naturalHeight, natural, 0.92))
+        setCrop(fitAspectRect(loaded.width / loaded.height, { width: loaded.width, height: loaded.height }, 0.92))
       })
       .catch((loadFailure: unknown) => {
         if (active) setLoadError(loadFailure instanceof Error ? loadFailure.message : "That image could not be read.")
       })
     return () => {
       active = false
+      // Release the decoded bitmap; a canvas has no URL to leak.
+      decoded?.close()
     }
   }, [file])
 
@@ -106,12 +113,12 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
     if (!image || !stageSize.width || !stageSize.height) return 1
     const usableWidth = Math.max(1, stageSize.width - STAGE_MARGIN * 2)
     const usableHeight = Math.max(1, stageSize.height - STAGE_MARGIN * 2)
-    return Math.min(usableWidth / image.naturalWidth, usableHeight / image.naturalHeight)
+    return Math.min(usableWidth / image.width, usableHeight / image.height)
   }, [image, stageSize])
 
   const displayScale = fitScale * zoom
-  const displayWidth = image ? image.naturalWidth * displayScale : 0
-  const displayHeight = image ? image.naturalHeight * displayScale : 0
+  const displayWidth = image ? image.width * displayScale : 0
+  const displayHeight = image ? image.height * displayScale : 0
 
   // Minimum grab size is defined on screen, then converted to image pixels. A
   // hard floor in image pixels would make small logos impossible to crop finely.
@@ -126,7 +133,9 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
   const visibleBoundsFor = useCallback(
     (nextZoom: number) => {
       const scale = fitScale * nextZoom
-      if (!stageSize.width || !stageSize.height || nextZoom <= 1) return bounds
+      if (!stageSize.width || !stageSize.height || nextZoom <= 1) {
+        return { x: 0, y: 0, width: bounds.width, height: bounds.height }
+      }
       const visibleWidth = Math.min(bounds.width, stageSize.width / scale)
       const visibleHeight = Math.min(bounds.height, stageSize.height / scale)
       return {
@@ -141,10 +150,43 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
 
   const visibleBounds = useMemo(() => visibleBoundsFor(zoom), [visibleBoundsFor, zoom])
 
+  /**
+   * Keeps the crop reachable after a zoom change WITHOUT resizing it. Shrinking
+   * the crop to fit a zoomed-in window silently destroyed the user's framing:
+   * zoom in and back out left a tiny crop that never recovered. When the crop is
+   * larger than the window it is simply aligned to the window and allowed to
+   * extend past it, which zooming out then reveals in full.
+   */
+  const keepReachable = useCallback(
+    (rect: CropRect, window: CropRect) => ({
+      ...rect,
+      x: Math.min(Math.max(rect.x, window.x), Math.max(window.x, window.x + window.width - rect.width)),
+      y: Math.min(Math.max(rect.y, window.y), Math.max(window.y, window.y + window.height - rect.height)),
+    }),
+    [],
+  )
+
+  // Paint the decoded bitmap into the canvas whenever the display size changes.
+  // Drawing from the bitmap avoids the object URL entirely, so the stage can
+  // never render against a revoked src.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !image || displayWidth <= 0 || displayHeight <= 0) return
+    const ratio = Math.min(2, Math.max(1, Math.round((globalThis.devicePixelRatio || 1) * 2) / 2))
+    canvas.width = Math.max(1, Math.round(displayWidth * ratio))
+    canvas.height = Math.max(1, Math.round(displayHeight * ratio))
+    const context = canvas.getContext("2d")
+    if (!context) return
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = "high"
+    image.draw(context, 0, 0, image.width, image.height, 0, 0, canvas.width, canvas.height)
+  }, [displayHeight, displayWidth, image])
+
   const resetCrop = useCallback(
     (nextAspect: number | null = aspect) => {
       if (!image) return
-      setCrop(fitAspectRect(nextAspect ?? image.naturalWidth / image.naturalHeight, visibleBounds, 0.92))
+      setCrop(fitAspectRect(nextAspect ?? image.width / image.height, visibleBounds, 0.92))
     },
     [aspect, image, visibleBounds],
   )
@@ -270,8 +312,12 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
           <>
             <div ref={stageRef} className="relative h-[46vh] min-h-56 touch-none overflow-hidden bg-foreground/5 select-none sm:h-[420px]">
               <div className="absolute inset-0 flex items-center justify-center">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image.src} alt="" className="max-w-none" style={{ width: displayWidth, height: displayHeight }} draggable={false} />
+                <canvas
+                  ref={canvasRef}
+                  aria-label="Image being cropped"
+                  className="max-w-none"
+                  style={{ width: displayWidth, height: displayHeight }}
+                />
               </div>
               <div
                 className="absolute cursor-move touch-none"
@@ -330,16 +376,16 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
                 <input
                   type="range"
                   min={1}
-                  max={4}
+                  max={2}
                   step={0.05}
                   value={zoom}
                   onChange={(event) => {
                     const next = Number(event.target.value)
                     setZoom(next)
-                    // Zooming changes which part of the image is reachable, so
-                    // pull the crop back into the new visible window.
+                    // Re-anchor the crop into the new visible window without
+                    // changing its size, so zooming never eats the selection.
                     const nextVisible = visibleBoundsFor(next)
-                    setCrop((current) => (current ? normalizeCropRect(current, nextVisible, minEdgeForScale(fitScale * next)) : current))
+                    setCrop((current) => (current ? keepReachable(current, nextVisible) : current))
                   }}
                   className="h-2 min-w-0 flex-1 accent-primary"
                   aria-label="Zoom"

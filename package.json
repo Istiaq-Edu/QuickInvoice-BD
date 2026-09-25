@@ -11,7 +11,8 @@
     "test:unit": "vitest run tests/unit",
     "test:supabase": "vitest run tests/supabase/rls.test.ts",
     "test:supabase:sql": "node tests/supabase/run-sql-smoke.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "debug:logo": "node scripts/debug-logo-crop.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

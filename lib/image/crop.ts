@@ -156,25 +156,82 @@ function scaleToFit(width: number, height: number, maxEdge: number) {
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), scale }
 }
 
-export function loadImageFile(file: File): Promise<HTMLImageElement> {
+/**
+ * A decoded image that owns no object URL.
+ *
+ * An earlier version created a blob URL, revoked it as soon as the element had
+ * loaded, and then handed the same element back to the caller. The `src` was
+ * already dead by the time the cropper rendered it, so the stage showed nothing
+ * and every resize interaction appeared broken. Decoding to an ImageBitmap keeps
+ * no URL alive at all; the fallback keeps its URL alive until `close()`.
+ */
+export type DecodedImage = {
+  width: number
+  height: number
+  /** Draws a source region of the image into a 2D context. */
+  draw: (
+    context: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    dx: number,
+    dy: number,
+    dw: number,
+    dh: number,
+  ) => void
+  /** Releases the underlying decoded data. Safe to call more than once. */
+  close: () => void
+}
+
+function decodeViaElement(file: File): Promise<DecodedImage> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const image = new Image()
+    const release = () => URL.revokeObjectURL(url)
     image.onload = () => {
-      URL.revokeObjectURL(url)
-      // Guard against zero-sized images that would make the crop maths divide by zero.
-      if (!image.naturalWidth || !image.naturalHeight) {
+      const width = image.naturalWidth
+      const height = image.naturalHeight
+      if (!width || !height) {
+        release()
         reject(new Error("That image could not be read. Try a different file."))
         return
       }
-      resolve(image)
+      resolve({
+        width,
+        height,
+        draw: (context, sx, sy, sw, sh, dx, dy, dw, dh) =>
+          context.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh),
+        close: release,
+      })
     }
     image.onerror = () => {
-      URL.revokeObjectURL(url)
+      release()
       reject(new Error("That file is not a readable image."))
     }
     image.src = url
   })
+}
+
+export async function loadImageFile(file: File): Promise<DecodedImage> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file)
+      if (bitmap.width && bitmap.height) {
+        return {
+          width: bitmap.width,
+          height: bitmap.height,
+          draw: (context, sx, sy, sw, sh, dx, dy, dw, dh) =>
+            context.drawImage(bitmap, sx, sy, sw, sh, dx, dy, dw, dh),
+          close: () => bitmap.close(),
+        }
+      }
+      bitmap.close()
+    } catch {
+      // Fall through to the element-based decoder.
+    }
+  }
+  return decodeViaElement(file)
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: number): Promise<Blob> {
@@ -187,8 +244,8 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: num
   })
 }
 
-function renderToCanvas(image: HTMLImageElement, rect: CropRect, maxEdge: number) {
-  const safe = normalizeCropRect(rect, { width: image.naturalWidth, height: image.naturalHeight }, 1)
+function renderToCanvas(image: DecodedImage, rect: CropRect, maxEdge: number) {
+  const safe = normalizeCropRect(rect, { width: image.width, height: image.height }, 1)
   const { width, height } = scaleToFit(safe.width, safe.height, maxEdge)
   const canvas = document.createElement("canvas")
   canvas.width = width
@@ -199,8 +256,8 @@ function renderToCanvas(image: HTMLImageElement, rect: CropRect, maxEdge: number
   context.imageSmoothingQuality = "high"
   // Transparent backgrounds are meaningful for logos, so clear before drawing.
   context.clearRect(0, 0, width, height)
-  context.drawImage(
-    image,
+  image.draw(
+    context,
     Math.round(safe.x),
     Math.round(safe.y),
     Math.round(safe.width),
@@ -219,7 +276,7 @@ function renderToCanvas(image: HTMLImageElement, rect: CropRect, maxEdge: number
  * bucket limit, which happens with photographic logos.
  */
 export async function renderCropToFile(
-  image: HTMLImageElement,
+  image: DecodedImage,
   rect: CropRect,
   originalName: string,
   options: RenderOptions = {},
@@ -252,8 +309,15 @@ export async function renderCropToFile(
 /** Downscales an untouched image so a large photo does not need a 2 MB upload. */
 export async function prepareLogoFile(file: File, maxEdge = MAX_LOGO_EDGE): Promise<File> {
   const image = await loadImageFile(file)
-  const { width, height } = { width: image.naturalWidth, height: image.naturalHeight }
+  const { width, height } = image
   const longest = Math.max(width, height)
-  if (file.size <= MAX_UPLOAD_BYTES && longest <= maxEdge) return file
-  return renderCropToFile(image, { x: 0, y: 0, width, height }, file.name, { maxEdge })
+  if (file.size <= MAX_UPLOAD_BYTES && longest <= maxEdge) {
+    image.close()
+    return file
+  }
+  try {
+    return await renderCropToFile(image, { x: 0, y: 0, width, height }, file.name, { maxEdge })
+  } finally {
+    image.close()
+  }
 }

@@ -45,4 +45,5 @@ next-env.d.ts
 # local QA artifacts
 *.log
 /shots/
+/debug-out/
 Thumbs.db
