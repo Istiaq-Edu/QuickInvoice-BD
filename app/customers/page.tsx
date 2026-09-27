@@ -8,6 +8,7 @@ import { LockKeyhole, Pencil, Search, Trash2, UserRound, X } from "lucide-react"
 import { WorkspaceHeader } from "@/components/workspace-header"
 import { WorkspacePageHeader } from "@/components/workspace-page-header"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { useConfirm } from "@/components/confirm-dialog"
 
 type Customer = {
   id: string
@@ -30,6 +31,7 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [message, setMessage] = useState("")
 
   useEffect(() => {
@@ -76,7 +78,15 @@ export default function CustomersPage() {
   }
 
   const remove = async (customer: Customer) => {
-    if (!window.confirm(`Remove ${customer.companyName || customer.name} from your customer directory?`)) return
+    const name = customer.companyName || customer.name
+    const confirmed = await confirm({
+      body: <p className="text-sm text-muted-foreground">{name} will be removed from your customer directory. Invoices already issued to them keep their stored copy of their details.</p>,
+      confirmLabel: "Remove customer",
+      description: `Remove ${name} from your customer directory?`,
+      destructive: true,
+      title: "Remove customer",
+    })
+    if (!confirmed) return
     setError("")
     try {
       const response = await fetch(`/api/customers?id=${encodeURIComponent(customer.id)}`, { method: "DELETE" })
@@ -106,6 +116,7 @@ export default function CustomersPage() {
         <section className="surface" aria-label="Customer directory" aria-busy={loading}><div className="border-b border-border p-4 sm:p-5"><div className="flex items-center justify-between gap-4"><div><h2 className="text-sm font-semibold">Customer directory</h2><p className="mt-1 text-xs text-muted-foreground">{customers.length} {customers.length === 1 ? "saved customer" : "saved customers"}</p></div></div><label className="relative mt-4 block"><span className="sr-only">Search customers</span><Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} /><input className="field pl-9" placeholder="Search by company, contact, email or phone" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>{error && <p className="m-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-destructive" role="alert">{error}</p>}{loading ? <p className="p-8 text-sm text-muted-foreground">Loading customers…</p> : customers.length === 0 ? <div className="flex min-h-64 flex-col items-center justify-center p-8 text-center"><span className="flex size-11 items-center justify-center rounded-2xl border border-border bg-muted text-muted-foreground"><UserRound size={19} /></span><p className="mt-4 font-heading text-xl font-medium">{query ? "No customers match your search" : "No customers yet"}</p><p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">{query ? "Try a different company name, contact, email, or phone number." : "Add a customer to reuse their details on future invoices."}</p></div> : <div className="divide-y divide-border/70">{customers.map((customer) => <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5" key={customer.id}><div className="flex min-w-0 items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-sm font-bold text-foreground">{((customer.companyName || customer.name || "?").trim().charAt(0) || "?").toUpperCase()}</span><div className="min-w-0"><p className="font-semibold">{customer.companyName || customer.name}</p>{customer.companyName && <p className="text-sm text-muted-foreground">{customer.name}</p>}{(customer.email || customer.phone) && <p className="mt-1 text-xs text-muted-foreground">{[customer.email, customer.phone].filter(Boolean).join(" · ")}</p>}{customer.address && <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">{customer.address}</p>}</div></div><div className="flex shrink-0 gap-3"><button className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-foreground/80 hover:bg-muted/60 hover:text-foreground hover:underline" type="button" onClick={() => edit(customer)}><Pencil size={13} />Edit</button><button className="inline-flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-destructive hover:bg-rose-500/10 hover:underline" type="button" onClick={() => void remove(customer)}><Trash2 size={13} />Remove</button></div></div>)}</div>}</section>
       </div>}
     </div>
+    {confirmDialog}
   </main>
 }
 

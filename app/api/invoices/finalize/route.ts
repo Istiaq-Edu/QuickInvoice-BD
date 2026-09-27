@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       : result.error_code === "ALREADY_FINALIZED"
         ? "This invoice is already finalized."
         : result.error_code === "REQUIRED_FIELDS_MISSING"
-          ? "Complete the required seller and buyer fields first."
+          ? "Complete the required seller and buyer name fields first."
           : result.error_code === "LINE_ITEMS_REQUIRED" || result.error_code.startsWith("LINE_ITEM")
             ? "Complete every line item before finalizing."
             : result.error_code === "DISCOUNT_INVALID"

@@ -10,6 +10,7 @@ import { WorkspaceHeader } from "@/components/workspace-header"
 import { WorkspacePageHeader } from "@/components/workspace-page-header"
 import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { useConfirm } from "@/components/confirm-dialog"
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
 import { clearCachedLogoUrl, resolveLogoImageUrl } from "@/lib/image/logo-url-cache"
 
@@ -43,6 +44,7 @@ export default function AccountSettingsPage() {
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const { confirm, dialog: confirmDialog } = useConfirm()
 
   useEffect(() => {
     fetch("/api/seller-profile").then(async (response) => {
@@ -99,7 +101,14 @@ export default function AccountSettingsPage() {
     }
   }
   const removeLogo = async () => {
-    if (!window.confirm("Remove the seller logo from future invoices? Existing finalized invoices keep their snapshot.")) return
+    const confirmed = await confirm({
+      body: <p className="text-sm text-muted-foreground">New invoices will no longer include the logo. Invoices you have already finalized keep their own stored copy, so nothing already sent to a customer will change.</p>,
+      confirmLabel: "Remove logo",
+      description: "Remove the seller logo from future invoices?",
+      destructive: true,
+      title: "Remove seller logo",
+    })
+    if (!confirmed) return
     setUploadingLogo(true)
     setError("")
     try {
@@ -179,6 +188,7 @@ export default function AccountSettingsPage() {
         }}
       />
     )}
+    {confirmDialog}
   </main>
 }
 

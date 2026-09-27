@@ -98,11 +98,16 @@ for (const [label, viewport] of [
     await page.getByRole("navigation", { name: "Invoice steps" }).getByRole("button", { name: "Items" }).click()
     await page.waitForTimeout(200)
   }
-  const addDiscount = page.getByRole("button", { name: "Add discount item 1" })
-  if (await addDiscount.isVisible()) {
-    await addDiscount.click()
-    await page.locator('input[aria-label="Discount value item 1"]').fill("10")
-  }
+  // The discount band is on every row, so there is no menu to open: pick a type,
+  // then a value. The old "Add discount item 1" button and the "Discount this
+  // line" menu item are both gone; a silent skip here used to leave the audit
+  // measuring the un-discounted panel, so the value is asserted rather than hoped
+  // for — if this ever silently stops applying, the band measures empty.
+  // Quantity is filled too: a new line starts blank, and a blank quantity makes
+  // every amount zero, which would make the discount arithmetic measure as 0 − 0.
+  await page.locator('input[id^="quantity-1"]').fill("1");
+  await page.locator('select#discount-type-1').selectOption("percentage");
+  await page.locator('input[aria-label="Discount value item 1"]').fill("10")
 
   await page.waitForTimeout(400)
   const r = await page.evaluate(PROBE)
@@ -131,7 +136,9 @@ for (const [label, viewport] of [
     return {
       contentScrollWidth: scrollerTarget ? scrollerTarget.scrollWidth : null,
       contentClientWidth: scrollerTarget ? scrollerTarget.clientWidth : null,
-      description: w(document.querySelector('input[aria-label="Item 1 description"]')),
+      // Matched by id, not aria-label: the description field's accessible name now
+      // comes from its wrapping <label>, so the old attribute selector finds nothing.
+      description: w(document.querySelector('input[id^="description-1"]')),
       discountSelect: w(document.querySelector("select#discount-type-1")),
       discountValue: w(document.querySelector('input[aria-label="Discount value item 1"]')),
       itemsOverflowX: (() => {

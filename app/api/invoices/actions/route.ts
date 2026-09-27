@@ -3,12 +3,18 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 const requestSchema = z.object({
-  action: z.enum(["revise", "payment_status", "trash", "restore", "permanently_delete"]),
+  action: z.enum(["revise", "payment_status", "trash", "restore", "permanently_delete", "reissue_balance"]),
   invoiceId: z.string().uuid(),
-  paymentStatus: z.enum(["unpaid", "paid", "overdue"]).optional(),
+  paymentStatus: z.enum(["unpaid", "partial", "paid", "overdue"]).optional(),
 }).superRefine((request, context) => {
   if (request.action === "payment_status" && !request.paymentStatus) {
     context.addIssue({ code: "custom", path: ["paymentStatus"], message: "Payment status is required." })
+  }
+  // "partial" is derived from the payment ledger, so it cannot be set by hand.
+  // Choosing it without recording payments would show a state the books
+  // disagree with, and the next sync would silently revert it.
+  if (request.action === "payment_status" && request.paymentStatus === "partial") {
+    context.addIssue({ code: "custom", path: ["paymentStatus"], message: "Record a payment to mark an invoice partially paid." })
   }
 })
 
@@ -30,6 +36,9 @@ const messageForError = (code: string) => {
   if (code === "INVOICE_NOT_FOUND") return "That invoice could not be found."
   if (code === "WORKSPACE_NOT_FOUND") return "Your workspace could not be found."
   if (code === "AUTH_REQUIRED") return "Authentication is required."
+  if (code === "PAYMENTS_RECORDED") return "This invoice has recorded payments. Remove them before marking it unpaid."
+  if (code === "PAYMENTS_EXCEED_NEW_TOTAL") return "The recorded payments are more than this invoice's new total. Remove a payment or raise the total instead."
+  if (code === "NOTHING_OUTSTANDING") return "This invoice is already settled in full, so there is no balance to re-raise."
   return "Invoice action could not be completed."
 }
 
@@ -47,6 +56,8 @@ export async function POST(request: Request) {
   const { action, invoiceId, paymentStatus } = parsed.data
   const rpc = action === "revise"
     ? supabase.rpc("revise_invoice", { p_invoice_id: invoiceId })
+    : action === "reissue_balance"
+      ? supabase.rpc("reissue_invoice_balance", { p_invoice_id: invoiceId })
     : action === "payment_status"
       ? supabase.rpc("update_invoice_payment_status", { p_invoice_id: invoiceId, p_payment_status: paymentStatus })
       : action === "trash"
@@ -62,6 +73,15 @@ export async function POST(request: Request) {
     const errorCode = typeof data === "string" ? data : null
     if (errorCode) return NextResponse.json({ code: errorCode, error: messageForError(errorCode) }, { status: statusForError(errorCode) })
     return NextResponse.json({ success: true })
+  }
+
+  // reissue_invoice_balance returns the new draft under a different column, so it
+  // is read separately and the caller navigates straight into the editor.
+  if (action === "reissue_balance") {
+    const reissued = (Array.isArray(data) ? data[0] : data) as { result_new_invoice_id: string | null; result_amount: number | null; error_code: string | null } | null
+    if (!reissued) return NextResponse.json({ error: "Invoice action returned no result." }, { status: 500 })
+    if (reissued.error_code) return NextResponse.json({ code: reissued.error_code, error: messageForError(reissued.error_code) }, { status: statusForError(reissued.error_code) })
+    return NextResponse.json({ id: reissued.result_new_invoice_id, amount: Number(reissued.result_amount ?? 0) })
   }
 
   const result = (Array.isArray(data) ? data[0] : data) as ActionResult | null

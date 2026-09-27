@@ -26,7 +26,7 @@ const statusForError = (code: string) => {
 const messageForError = (code: string) => {
   if (code === "VERSION_CONFLICT") return "This invoice changed elsewhere. Reload it before saving."
   if (code === "NOT_FINALIZED") return "Only finalized invoices can be edited here."
-  if (code === "REQUIRED_FIELDS_MISSING") return "Complete the required seller and buyer fields first."
+  if (code === "REQUIRED_FIELDS_MISSING") return "Complete the required seller and buyer name fields first."
   if (code === "LINE_ITEMS_REQUIRED" || code.startsWith("LINE_ITEM")) return "Complete every line item before saving."
   if (code === "DISCOUNT_INVALID") return "Check the discount amount before saving."
   return "Invoice could not be saved."

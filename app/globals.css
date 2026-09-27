@@ -77,7 +77,12 @@
   --accent-foreground: #214c41;
   --destructive: #b42318;
   --border: #d8d3c8;
-  --input: #c8c2b5;
+  /* Two border weights, deliberately. --border separates data regions and can stay
+     quiet; --input is for interactive controls and must clear 3:1 against the card so
+     the control is identifiable without a label (WCAG 1.4.11). #948c7b measures 3.28:1
+     on --card. The previous #8f8879 also cleared the bar, but at 3.46:1 a heavy border on
+     every field is the fastest way to make an interface read as a template. */
+  --input: #948c7b;
   --ring: #2f6b5c;
   --chart-1: #2f6b5c;
   --chart-2: #b07d3f;
@@ -113,7 +118,7 @@
   --accent-foreground: #214c41;
   --destructive: #b42318;
   --border: #d8d3c8;
-  --input: #c8c2b5;
+  --input: #948c7b;
   --ring: #2f6b5c;
   --radius: 0.75rem;
 }
@@ -157,6 +162,92 @@
   .workspace-page-header {
     @apply mb-8 flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-end;
   }
+  /* Data-heavy pages (invoice history) trade the large display title and the
+     description paragraph for vertical room, because every pixel above the table
+     is a row the seller has to scroll past. */
+  .workspace-page-header-compact {
+    @apply mb-4 gap-3 sm:items-center;
+  }
+  /* ---------- Money ----------
+     Amounts are set in Geist Mono, and that is not a stylistic flourish: it is
+     the only loaded face with real tabular figures.
+
+     Measured in the browser, Geist *Sans* renders "1111111111" at 55.69px and
+     "0000000000" at 107.53px — a "1" is barely half the width of a "0". The
+     `tabular-nums` declaration below computes to "tabular-nums" and then does
+     nothing, because the face has no `tnum` feature to switch on. So every
+     amount in the app, including the printed document, had digits that changed
+     width as a figure was typed, and no column of money could be aligned.
+     Geist Mono measures 96.00px for both, so the figures are genuinely equal
+     width. `scripts/check-tabular-nums.mjs` asserts this, because a silent
+     regression back to a proportional face is invisible in a screenshot.
+
+     The Bengali taka sign still needs its own stack: Geist Mono has no ৳, and
+     the fallback draws it on a narrower advance than the figures beside it. */
+  .money {
+    font-family: var(--font-geist-mono), "Noto Sans Bengali", "Nirmala UI", Vrinda, monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+  /* The taka sign has to be corrected wherever it appears, including mid-string
+     ("of ৳2,000 · ৳800 received"), so MoneyText wraps each one in a real element
+     and this rule styles that element. A ::first-letter rule could never do this:
+     it applies only to the first letter of a block container, so on the inline
+     <output> and <span> amounts used throughout the editor it silently did
+     nothing, and the sign struck through the first digit.
+
+     The Bengali fallback draws ৳ on a narrower advance than the tabular figures,
+     which is what made it overlap the first digit. Naming the fallback font
+     explicitly on the sign, plus a hair of tracking and padding, gives the glyph
+     its own space so it can never collide with the number beside it. */
+  /* Size is set by looking at the render, which is the only method that held up.
+     Three attempts to compute it failed, and each failed differently, which is
+     worth recording so nobody repeats them.
+
+     Canvas TextMetrics reported the ৳ at 0.93em and pointed at 0.82em. The sign was
+     still obviously too tall: those metrics describe the named font, but none of
+     "Noto Sans Bengali", "Nirmala UI" or Vrinda is installed here, so the browser
+     substitutes a different glyph and measures a glyph nobody will see.
+
+     Counting the ink rows of a screenshot of the live element pointed at 0.574em,
+     which then read as too small. A later probe compared the sign's ink rows
+     against the digit's while the two were rendered at *different* font sizes, so
+     its ratio was meaningless — and it duly returned an identical ratio for two
+     different sizes, which is what exposed the bug.
+
+     So the value was found by rendering, looking, and adjusting: 0.68em read too
+     tall and 0.55em read too short, which puts the match at 0.64em. That is
+     where a currency sign belongs — level with the digits, not a superscript and
+     not a subscript. */
+  /* Size is now measured from a known face, not from whatever the OS substitutes.
+
+     Every amount is set in Geist Mono, which has no ৳ (U+09F3), so the sign comes
+     from Noto Sans Bengali -- self-hosted in layout.tsx. That matters more than it
+     sounds: while the face was left to the system, three attempts to size this
+     disagreed with one another, because TextMetrics, a screenshot ink count and a
+     visual judgement were each describing a *different* substituted glyph. With
+     the face fixed, scripts/check-tabular-nums.mjs can render the sign and a "0"
+     at the same font-size and count ink rows, which gives one real number.
+
+     Measured: the ৳ paints 200 rows where a Geist Mono "0" paints 148, so at 1em
+     the sign is 1.351x the digit height. 1 / 1.351 = 0.74em is therefore the size
+     that lands them level. 0.78em was 5% tall, which is the faint overshoot still
+     visible in the amount-due figure. */
+  .taka {
+    font-family: var(--font-noto-bengali), "Noto Sans Bengali", sans-serif;
+    font-size: 0.74em;
+    line-height: 1;
+    vertical-align: -0.01em;
+    letter-spacing: 0.01em;
+    padding-right: 0.04em;
+  }
+  /* The sign rendered inside an input, where it must never affect the value or
+     the caret. Same metrics as .taka, sized down to match the muted affix role. */
+  .taka-affix {
+    font-family: "Noto Sans Bengali", "Nirmala UI", Vrinda, var(--font-geist-sans), sans-serif;
+    line-height: 1;
+    letter-spacing: 0.01em;
+  }
   .editor-section {
     @apply relative overflow-hidden;
   }
@@ -175,16 +266,73 @@
 
   /* ---------- Controls ---------- */
   .field {
-    @apply min-h-11 w-full rounded-lg border border-input bg-card px-3 py-2 text-sm text-foreground outline-none transition duration-200 placeholder:text-muted-foreground/80;
+    @apply min-h-11 w-full rounded-lg border border-input bg-card px-3 py-2 text-sm text-foreground outline-none transition duration-200 placeholder:text-muted-foreground;
     box-shadow: 0 1px 1px rgb(28 38 33 / 0.025);
   }
   .field:hover {
     @apply border-primary/35;
   }
+  /* Keyboard focus paints a ring; a pointer press does not, so clicking a field
+     does not flash a focus state the user never asked for. */
   .field:focus,
   .field:focus-visible {
     @apply border-ring;
     box-shadow: 0 0 0 3px rgb(47 107 92 / 0.13);
+  }
+  .field:focus:not(:focus-visible) {
+    box-shadow: 0 1px 1px rgb(28 38 33 / 0.025);
+  }
+  /* Mirrors the `aria-invalid:*` treatment on Button so rejected input is styled
+     the same way as every other invalid control. */
+  /* ---------- Ledger rows ----------
+     A line item is a document line, and a document line has an edge. The fields
+     went borderless on the argument that six identical boxes read as a wall with
+     no hierarchy. That was true of the *weight* the boxes carried, and it was
+     answered with the wrong remedy: deleting the border deleted the one thing
+     that said "this is where you type". On a field of hairlines the editable
+     cells and the printed ones are the same object, so a seller has to aim at a
+     cell and then find out whether they hit it.
+
+     The box is back, kept quiet by weight rather than by absence: one hairline in
+     the same border token as every other control on the page, no shadow, no fill.
+     Hover lifts it to a third of the accent and focus takes the accent outright
+     plus the shared focus ring, which is the same two-step `.field` uses. */
+  .ledger-field {
+    @apply h-9 w-full min-w-0 rounded-md border border-border bg-card px-2.5 text-foreground transition-colors;
+  }
+  .ledger-field:hover {
+    @apply border-primary/45;
+  }
+  .ledger-field:focus,
+  .ledger-field:focus-visible {
+    @apply border-primary outline-none;
+    box-shadow: 0 0 0 3px rgb(47 107 92 / 0.13);
+  }
+  .ledger-field::placeholder {
+    @apply text-muted-foreground;
+  }
+  /* Native spin buttons sit inside the padding box and crowd a 64px cell, and
+     the arrow keys already step these fields. */
+  .ledger-field::-webkit-outer-spin-button,
+  .ledger-field::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* The amount is computed, so it is boxed like the fields for the column's sake
+     and marked apart from them by a dashed edge and a muted fill: filled and
+     printed cells share a baseline, and only one of them accepts a caret. */
+  .ledger-readout {
+    @apply flex h-9 w-full min-w-0 items-center rounded-md border border-dashed border-border/70 bg-muted/30 px-2.5 text-foreground;
+  }
+
+  .field[aria-invalid="true"] {
+    @apply border-destructive;
+    box-shadow: 0 0 0 3px rgb(180 35 24 / 0.12);
+  }
+  .field[aria-invalid="true"]:focus,
+  .field[aria-invalid="true"]:focus-visible {
+    @apply border-destructive;
+    box-shadow: 0 0 0 3px rgb(180 35 24 / 0.16);
   }
   select.field option {
     background-color: #fffdf8;

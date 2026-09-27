@@ -4,6 +4,7 @@ import Link from "next/link"
 import { FormEvent, useCallback, useEffect, useState } from "react"
 import { AlertTriangle, CheckCircle2, MailPlus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { useConfirm } from "@/components/confirm-dialog"
 
 type PurgeJob = {
   status: "pending" | "running" | "complete" | "failed"
@@ -46,6 +47,7 @@ export function AllowlistManager({ currentEmail }: { currentEmail: string }) {
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState("")
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [message, setMessage] = useState("")
 
   const load = useCallback(async (background = false) => {
@@ -93,7 +95,27 @@ export function AllowlistManager({ currentEmail }: { currentEmail: string }) {
   }
 
   const removeEntry = async (entry: AllowlistEntry) => {
-    const confirmed = window.confirm(`Remove ${entry.email} from the approved allowlist? If this account exists, it will be disabled and queued for permanent purge.`)
+    // The list endpoint does not say whether an account exists for an address, so
+    // the prompt always states the purge consequence rather than claiming to know.
+    // A pending purge is the one state that is knowable, and it needs spelling out
+    // because removing then does not queue a new job.
+    const purgePending = entry.status === "purge_pending" || entry.purgeJob?.status === "pending" || entry.purgeJob?.status === "running"
+    const confirmed = await confirm({
+      body: (
+        <>
+          <p className="text-sm text-muted-foreground">{entry.email} will be removed from the approved allowlist.</p>
+          <p className="border-t border-border pt-1 text-sm font-medium text-destructive">
+            {purgePending
+              ? "A purge is already queued for this address. It will keep running and cannot be cancelled from here."
+              : "If an account exists for this address, it will be disabled immediately and its data queued for permanent erasure by the daily server-side job."}
+          </p>
+        </>
+      ),
+      confirmLabel: "Remove from allowlist",
+      description: `Remove ${entry.email} from the approved allowlist?`,
+      destructive: true,
+      title: "Remove allowlist entry",
+    })
     if (!confirmed) return
 
     setRemovingId(entry.id)
@@ -159,5 +181,6 @@ export function AllowlistManager({ currentEmail }: { currentEmail: string }) {
         <p className="mt-1">Removing an entry disables that account immediately and queues its data for erasure. A server-side job runs daily and deletes the workspace data, private logo files, and the sign-in account. Purges never run in your browser, so closing this page will not cancel one. Use <span className="font-medium text-foreground">Refresh status</span> to follow a queued purge.</p>
       </aside>
     </div>
+    {confirmDialog}
   </main>
 }

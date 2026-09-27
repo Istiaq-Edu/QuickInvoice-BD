@@ -39,13 +39,20 @@ await items.scrollIntoViewIfNeeded();
 await page.waitForTimeout(300);
 await items.screenshot({ path: "shots/items-desktop.png" });
 // Add a second item with a discount to see multi-card flow.
+// Addressed by id rather than aria-label: the description field's accessible name
+// now comes from its wrapping <label>, so the old aria-label selector finds
+// nothing and this script silently captured the empty state.
 await page.getByRole("button", { name: "Add another item", exact: true }).click();
-const secondDesc = page.locator('input[aria-label="Item 2 description"]');
+const secondDesc = page.locator('input[id^="description-"]').nth(1);
 await secondDesc.fill("Website design — homepage");
-await page.locator("#price-2").fill("5000");
-await page.getByRole("button", { name: "Add discount item 2" }).click();
-await page.locator("#discount-type-2").selectOption("percentage");
-await page.locator('input[aria-label="Discount value item 2"]').fill("10");
+// Quantity too: a new line starts blank, so without it the captured amounts are
+// all zero and the shot stops showing what a filled line actually looks like.
+await page.locator('input[id^="quantity-"]').nth(1).fill("1");
+await page.locator('input[id^="price-"]').nth(1).fill("5000");
+// A line's discount is on the row itself now, so it is a select and a value
+// rather than two clicks through the row's menu.
+await page.locator('select[id^="discount-type-"]').nth(1).selectOption("percentage");
+await page.locator('input[aria-label^="Discount value item"]').nth(1).fill("10");
 await page.waitForTimeout(300);
 await items.scrollIntoViewIfNeeded();
 await items.screenshot({ path: "shots/items-filled-desktop.png" });
@@ -55,6 +62,13 @@ for (const [label, viewport] of [
 ]) {
   const responsivePage = await browser.newPage({ viewport });
   await responsivePage.goto(`${BASE}/`, { waitUntil: "networkidle", timeout: 45000 });
+  // Below 1280px the editor collapses into a stepped flow, so the Items panel is
+  // display:none until its step is selected. Without this the panel never became
+  // visible and the capture timed out waiting for it to be stable.
+  if (viewport.width < 1280) {
+    await responsivePage.getByRole("navigation", { name: "Invoice steps" }).getByRole("button", { name: "Items" }).click();
+    await responsivePage.waitForTimeout(300);
+  }
   const responsiveItems = responsivePage.locator("fieldset .surface", { hasText: "What are you charging for?" });
   await responsiveItems.scrollIntoViewIfNeeded();
   await responsivePage.waitForTimeout(200);
@@ -80,8 +94,11 @@ await mItems.scrollIntoViewIfNeeded();
 await m.waitForTimeout(200);
 await capturePanel(m, mItems, "shots/items-mobile.png");
 await m.locator("#description-1").fill("Website design — homepage");
+await m.locator("#quantity-1").fill("1");
 await m.locator("#price-1").fill("5000");
-await m.getByRole("button", { name: "Add discount item 1" }).click();
+// Same as desktop: the type first, then the value. The value field is disabled
+// while the type is "No discount", so filling before selecting would throw.
+await m.locator('select[id^="discount-type-"]').first().selectOption("percentage");
 await m.locator('input[aria-label="Discount value item 1"]').fill("10");
 await m.waitForTimeout(250);
 await capturePanel(m, mItems, "shots/items-filled-mobile.png");

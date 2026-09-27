@@ -9,6 +9,9 @@ export const defaultTemplateSettings = {
   showBuyerContact: true,
   showNotes: true,
   showQuantityColumn: true,
+  // On by default: a settled invoice that still looks like a demand for money is
+  // the commonest reason a paid PDF gets chased.
+  showPaidStamp: true,
 }
 
 const templateSchema = z.object({
@@ -18,6 +21,7 @@ const templateSchema = z.object({
   showBuyerContact: z.boolean(),
   showNotes: z.boolean(),
   showQuantityColumn: z.boolean().default(true),
+  showPaidStamp: z.boolean().default(true),
 })
 
 async function getWorkspaceId(supabase: NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>, userId: string) {

@@ -10,6 +10,7 @@ export const templateSettingsSchema = z.object({
   showBuyerContact: z.boolean(),
   showNotes: z.boolean(),
   showQuantityColumn: z.boolean().default(true),
+  showPaidStamp: z.boolean().default(true),
 })
 
 export const invoiceLineSchema = z.object({
@@ -43,11 +44,19 @@ const invoiceCommonFields = {
   issueDate: z.string().date(),
   dueDate: z.string().date(),
   discountType: z.enum(["none", "fixed", "percentage"]),
-  paymentStatus: z.enum(["unpaid", "paid", "overdue"]),
+  paymentStatus: z.enum(["unpaid", "partial", "paid", "overdue"]),
   templateSettings: templateSettingsSchema.optional(),
   logoAssetId: z.string().uuid().nullable().optional(),
   notes: optionalText,
   paymentTerms: optionalText,
+  // Present only on an invoice raised to settle the balance of an earlier one.
+  carriedForward: z.object({
+    amount: integerAmount,
+    invoiceId: z.string().uuid(),
+    invoiceNumber: z.string().nullable().default(""),
+    originalTotal: integerAmount,
+    received: integerAmount,
+  }).optional(),
 }
 
 const invoiceDraftLineSchema = z.object({
@@ -70,13 +79,22 @@ export const invoiceDraftSchema = z.object({
   ...invoiceCommonFields,
   sellerCompanyName: z.string().trim().min(1, "Seller company name is required").max(500),
   sellerName: z.string().trim().min(1, "Seller name is required").max(500),
-  buyerCompanyName: z.string().trim().min(1, "Buyer company name is required").max(500),
+  // A buyer company is optional: an invoice can be billed to an individual. The
+  // buyer name is required and doubles as the "Bill to" heading when no company
+  // is given, so the invoice is always addressed to someone.
+  buyerCompanyName: z.string().trim().max(500).default(""),
   buyerName: z.string().trim().min(1, "Buyer name is required").max(500),
   discountValue: integerAmount,
   lines: z.array(invoiceLineSchema).min(1),
 }).superRefine((invoice, context) => {
   if (invoice.discountType === "percentage" && invoice.discountValue > 100) {
     context.addIssue({ code: "custom", path: ["discountValue"], message: "Percentage discount cannot exceed 100%." })
+  }
+  // Due before issue is a scheduling mistake, not a preference. The editor
+  // blocks it inline, but the API cannot trust the client, so finalized
+  // invoices are checked here too.
+  if (invoice.dueDate < invoice.issueDate) {
+    context.addIssue({ code: "custom", path: ["dueDate"], message: "Due date cannot be before the issue date." })
   }
 })
 
@@ -87,6 +105,11 @@ export const invoiceDraftSaveSchema = z.object({
 }).superRefine((invoice, context) => {
   if (invoice.discountType === "percentage" && typeof invoice.discountValue === "number" && invoice.discountValue > 100) {
     context.addIssue({ code: "custom", path: ["discountValue"], message: "Percentage discount cannot exceed 100%." })
+  }
+  // Autosave stays permissive about scheduling: it only refuses a due date that
+  // is already known to be before the issue date, so half-typed dates still save.
+  if (invoice.issueDate && invoice.dueDate && invoice.dueDate < invoice.issueDate) {
+    context.addIssue({ code: "custom", path: ["dueDate"], message: "Due date cannot be before the issue date." })
   }
 })
 

@@ -71,9 +71,33 @@ async function main() {
   const service = await db.query(`select has_function_privilege('service_role', 'public.mark_unused_logo_assets(integer, integer)', 'execute') as allowed`)
   check("service_role can execute mark_unused_logo_assets", service.rows[0].allowed === true)
 
+  // 4b. The settlement helpers are SECURITY DEFINER, so an EXECUTE grant would
+  // let a browser bypass the RPCs' workspace checks and rewrite amount_paid on
+  // another workspace's invoice. They must be unreachable from every role.
+  for (const role of ["anon", "authenticated", "public"]) {
+    for (const fn of ["public.sync_invoice_payment_totals(uuid)", "public.sync_invoice_payments_on_change()"]) {
+      const privilege = await db.query(`select has_function_privilege($1, $2, 'execute') as allowed`, [role, fn])
+      check(`${role} cannot execute ${fn.split("(")[0].split(".").pop()}`, privilege.rows[0].allowed === false)
+    }
+  }
+
   // 5. The retention rules, against seeded data. Rolled back at the end.
   await db.exec(read("./logo-retention.sql"))
   check("logo retention rules", true, "see assertions above")
+
+  // 6. A buyer company is optional end to end. The RPCs are the authority here, so
+  // the draft, the update and the finalization are all driven through them with a
+  // blank buyerCompanyName to prove the guard no longer rejects it. Rolled back.
+  await db.exec(read("./optional-buyer-company.sql"))
+  check("buyer company is optional across every write path", true, "see assertions above")
+
+  // 7. Partial payment settlement, through the real ledger RPCs. Rolled back.
+  await db.exec(read("./settlement.sql"))
+  check("partial payment settlement", true, "see assertions above")
+
+  // 8. Re-raising a balance, and the paid-stamp date. Rolled back.
+  await db.exec(read("./reissue-balance.sql"))
+  check("re-raise balance and paid stamp", true, "see assertions above")
 
   await db.close()
   const failed = results.filter((r) => !r.ok)

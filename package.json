@@ -13,7 +13,9 @@
     "test:supabase": "vitest run tests/supabase/rls.test.ts",
     "test:supabase:sql": "node tests/supabase/run-sql-smoke.mjs",
     "test:e2e": "playwright test",
-    "debug:logo": "node scripts/debug-logo-crop.mjs"
+    "audit:items": "node scripts/audit-items-a11y.mjs",
+    "debug:logo": "node scripts/debug-logo-crop.mjs",
+    "check:taka": "node scripts/check-tabular-nums.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

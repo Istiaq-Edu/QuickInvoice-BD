@@ -10,7 +10,9 @@ const hasAuthenticatedConfig = Boolean(hasAnonymousConfig && testEmail && testPa
 
 // logo_assets holds every workspace's storage paths, so it belongs in this list
 // even though it is not a "business" table like the others.
-const protectedTables = ["workspaces", "profiles", "seller_profiles", "logo_assets", "customers", "templates", "invoices", "invoice_lines"] as const
+// invoice_payments holds money movement, so it belongs in the protected list on
+// the same footing as invoices and customers.
+const protectedTables = ["workspaces", "profiles", "seller_profiles", "logo_assets", "customers", "templates", "invoices", "invoice_lines", "invoice_payments"] as const
 
 function testClient() {
   return createClient(supabaseUrl, publishableKey, {
@@ -74,7 +76,7 @@ describe("Supabase RLS smoke test", () => {
       if (workspaceError) throw new Error(`Could not read the authenticated test workspace: ${workspaceError.message}`)
       expect(workspaces).toEqual([{ id: workspaceId, owner_user_id: userData.user.id }])
 
-      for (const table of ["seller_profiles", "logo_assets", "customers", "templates", "invoices"] as const) {
+      for (const table of ["seller_profiles", "logo_assets", "customers", "templates", "invoices", "invoice_payments"] as const) {
         const { data, error } = await supabase.from(table).select("workspace_id")
         if (error) throw new Error(`Could not query authenticated public.${table}: ${error.message}`)
         expect(data?.every((row) => row.workspace_id === workspaceId), `Authenticated client crossed workspace boundary in public.${table}`).toBe(true)
