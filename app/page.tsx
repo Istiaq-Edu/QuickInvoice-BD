@@ -75,7 +75,7 @@ const ledgerColumns = "lg:grid-cols-[22px_minmax(0,1fr)_72px_112px_128px_40px] x
 // A row action, sitting on the row. Real buttons rather than menu items, so the
 // states are the native ones: `disabled` greys the control instead of relying on
 // Base UI's data-highlighted, and hover/focus styling is the same on all three.
-const rowActionButton = "inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+const rowActionButton = "touch-hit inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
 const ledgerHeader = "hidden items-center gap-x-2.5 border-b border-border/70 pb-2.5 lg:grid"
 // Shared by every numeric cell, header label included, so their left edges line up
 // with the text inside the box each one sits over. Left, not right: a column of
@@ -1514,7 +1514,7 @@ export default function Home() {
           <ol className="surface-soft flex gap-1.5 overflow-x-auto p-1.5">
             {mobileSteps.map((label, index) => (
               <li className="shrink-0" key={label}>
-                <button className={`flex min-h-10 items-center gap-2 rounded-full border px-3.5 text-xs font-semibold transition-colors ${index === mobileStep ? "border-primary bg-primary text-primary-foreground shadow-sm" : index < mobileStep ? "border-transparent bg-accent text-accent-foreground hover:border-primary/20" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`} type="button" aria-current={index === mobileStep ? "step" : undefined} onClick={() => goToStep(index)}>
+                <button className={`touch-hit flex min-h-10 items-center gap-2 rounded-full border px-3.5 text-xs font-semibold transition-colors ${index === mobileStep ? "border-primary bg-primary text-primary-foreground shadow-sm" : index < mobileStep ? "border-transparent bg-accent text-accent-foreground hover:border-primary/20" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`} type="button" aria-current={index === mobileStep ? "step" : undefined} onClick={() => goToStep(index)}>
                   <span className={`flex size-5 items-center justify-center rounded-full text-[9px] font-bold ${index === mobileStep ? "bg-white/18" : "bg-muted text-muted-foreground"}`}>{index + 1}</span>
                   {label}
                 </button>
@@ -1925,7 +1925,7 @@ function LineDiscountControls({ line, onChange }: { line: LineItem; onChange: (i
   // No `w-full` here: it would be declared after the width utilities in the
   // stylesheet and win regardless of class order, collapsing the select to
   // whatever min-content the flex row gave it (measured 64px, not the 88px set).
-  const compactField = "h-8 min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground transition-colors hover:border-primary/45 focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:border-dashed disabled:border-border/60 disabled:bg-muted/30 disabled:text-muted-foreground"
+  const compactField = "touch-hit h-8 min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground transition-colors hover:border-primary/45 focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:border-dashed disabled:border-border/60 disabled:bg-muted/30 disabled:text-muted-foreground"
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -1982,7 +1982,7 @@ function LineDiscountControls({ line, onChange }: { line: LineItem; onChange: (i
           field back to its default rather than deleting anything. */}
       <button
         aria-label={`Remove discount item ${line.id}`}
-        className="inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="touch-hit inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         onClick={() => onChange(line.id, { discountType: "none", discountValue: "" })}
         title="Remove this discount"
         type="button"

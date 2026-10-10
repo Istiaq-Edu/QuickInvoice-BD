@@ -48,6 +48,10 @@ next-env.d.ts
 /debug-out/
 Thumbs.db
 
+# Responsive-review screenshots. Regenerate with scripts/capture-mobile-review.mjs;
+# the evidence worth keeping is the measurement output, not 3.5 MB of PNGs.
+/docs/operations/mobile-review/
+
 # Windows/wizard scratch dumps (msinfo32, MSI logs) accidentally left in the repo root
 /_msi*.txt
 /_msinfo*.txt

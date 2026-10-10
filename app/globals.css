@@ -624,3 +624,35 @@
     -webkit-print-color-adjust: exact;
   }
 }
+
+/*
+ * Touch hit area, decoupled from painted size.
+ *
+ * The row actions and the discount controls stay 32px because 44px of paint
+ * would either crowd the row or push the ledger grid off a 320px screen. What
+ * was wrong was treating the painted box as the hit area: a 32x32 trash icon on
+ * a phone is under the 44x44 that WCAG 2.2 SC 2.5.5 asks for, and it is a
+ * destructive control, so a near miss is the expensive kind.
+ *
+ * This grows the tappable region to 44x44 with a transparent pseudo-element
+ * centred on the control, so the visual design is untouched and the target is
+ * full size. `position: relative` is required on the control itself; the checks
+ * here are in a `@media (pointer: coarse)` block because a mouse-driven desktop
+ * has no such problem and the larger region would only create dead zones
+ * between adjacent buttons.
+ */
+@media (pointer: coarse) {
+  .touch-hit {
+    position: relative;
+  }
+
+  .touch-hit::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+  }
+}
