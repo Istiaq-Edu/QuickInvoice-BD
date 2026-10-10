@@ -26,7 +26,6 @@ export function WorkspaceHeader({
     ...(isAdmin ? [{ href: "/admin/allowlist", label: "Admin", section: "admin" as const, icon: <ShieldCheck data-icon="inline-start" /> }] : []),
     ...(showTrash ? [{ href: "/invoices/trash", label: "Trash", section: "trash" as const, icon: <Trash2 data-icon="inline-start" /> }] : []),
   ]
-
   return <header className="glass-header sticky top-0 z-40">
     <div className="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
       <Link className="group flex min-h-10 min-w-0 items-center gap-3 text-sm font-semibold" href={backHref}>

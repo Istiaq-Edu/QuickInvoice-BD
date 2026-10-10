@@ -2,86 +2,53 @@
 
 import Image from "next/image"
 import Link from "next/link"
+import dynamic from "next/dynamic"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "cn"
-import { AlertTriangle, ChevronDown, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
 import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 
-import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
+import type { CroppedLogo } from "@/components/logo-cropper"
+
+// The cropper is a whole canvas editing surface that most sessions never open —
+// it is only mounted once a seller picks a logo file. Loading it lazily keeps its
+// module (and lib/image/crop behind it) out of the invoice page's first-load
+// bundle. `ssr: false` because it is a pointer/canvas UI with no server-rendered
+// form, and `loading` gives the modal a frame while the chunk arrives.
+const LogoCropper = dynamic(() => import("@/components/logo-cropper").then((mod) => mod.LogoCropper), {
+  ssr: false,
+  loading: () => <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4"><div className="rounded-2xl border border-border bg-background px-5 py-4 text-sm text-muted-foreground">Loading editor…</div></div>,
+})
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
 import { clearCachedLogoUrl, resolveLogoImageUrl, type LogoImagePayload } from "@/lib/image/logo-url-cache"
 import { clearSessionLogo, loadSessionLogo, saveSessionLogo, type SessionLogo } from "@/lib/image/session-logo"
 import { SignOutButton } from "@/components/sign-out-button"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { estimateExportPageCount, exportPreviewAsDocx, exportPreviewAsPdf } from "@/lib/invoice/export"
+import { PAGE_MARGIN_PX, SHEET_WIDTH_PX, contentBoxHeightPx, contentBoxWidthPx, exportPreviewAsDocx, exportPreviewAsPdf, pageFrameHeightPx } from "@/lib/invoice/export"
+import { useFittedSheet, usePaperGeometry } from "@/components/invoice-pagination"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { MoneyText } from "@/components/money-text"
 import type { InvoiceDraft, TemplateSettings, CarriedForward } from "@/lib/invoice/types"
 import { resolveBillToParty, formatMoney } from "@/lib/invoice/types"
+import {
+  addDaysIso,
+  diffDays,
+  formatDate,
+  formatDateLong,
+  getDhakaDate,
+  getLineAmounts,
+  newLine,
+  type DiscountType,
+  type LineItem,
+} from "@/lib/invoice/editor"
 
+// The editable line-item shape, the discount type, and every date/amount helper
+// now live in lib/invoice/editor.ts — pure functions with no React dependency.
+// They were module-scope helpers here, mixed in with the component and its JSX.
 type EditableNumber = number | ""
-type LineItem = { id: number; description: string; quantity: EditableNumber; unitPrice: EditableNumber; discountType: DiscountType; discountValue: EditableNumber }
-type DiscountType = "none" | "fixed" | "percentage"
 
-const getDhakaDate = () => {
-  const parts = new Intl.DateTimeFormat("en-CA", { day: "2-digit", month: "2-digit", timeZone: "Asia/Dhaka", year: "numeric" }).formatToParts(new Date())
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
-  return `${values.year}-${values.month}-${values.day}`
-}
-
-// Due defaults to two weeks after the issue date, matching the reissue path in
-// 0034 (`v_issue_date + 14`). Defaulting it to today made every new invoice due
-// immediately and produced false overdue states on day one.
-const addDaysIso = (iso: string, days: number) => {
-  const [year, month, day] = iso.split("-").map(Number)
-  if (!year || !month || !day) return ""
-  const date = new Date(Date.UTC(year, month - 1, day))
-  date.setUTCDate(date.getUTCDate() + days)
-  return date.toISOString().slice(0, 10)
-}
-
-// Money is formatted by the shared helper in lib/invoice/types. A local copy here
-// had drifted (different rounding, and a literal taka sign that a shell-based edit
-// had double-encoded), so the preview rendered "<taka sign>1,000" instead of "৳1,000".
-const formatDateLong = (value: string) => {
-  if (!value) return ""
-  const parts = value.split("-").map(Number)
-  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return ""
-  const [year, month, day] = parts
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-  if (month < 1 || month > 12 || day < 1 || day > 31) return ""
-  return `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`
-}
-const diffDays = (from: string, to: string) => {
-  const start = Date.parse(`${from}T00:00:00Z`)
-  const end = Date.parse(`${to}T00:00:00Z`)
-  if (Number.isNaN(start) || Number.isNaN(end)) return null
-  return Math.round((end - start) / 86_400_000)
-}
-const formatDate = (value: string) => {
-  if (!value) return "—"
-  const [year, month, day] = value.split("-")
-  return `${day}/${month}/${year}`
-}
-// A new line starts empty, not pre-filled. Quantity 1 and unit price 0 made a
-// fresh row read as a priced line at a glance, and the ledger's whole claim is
-// that what you see is what has been entered. Blank also means the placeholder
-// is doing its job: the cell says "0" in muted type until it holds a real 0.
-// The autosave mapper coerces both on the way out (`Number(x) || 1`), so a
-// stored draft still receives the 1 that the schema requires.
-const newLine = (id: number): LineItem => ({ id, description: "", quantity: "", unitPrice: "", discountType: "none", discountValue: "" })
-const getLineAmounts = (line: LineItem) => {
-  const originalAmount = Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.unitPrice) || 0)
-  const numericDiscount = Math.max(0, Number(line.discountValue) || 0)
-  const discountAmount = line.discountType === "fixed"
-    ? Math.min(originalAmount, numericDiscount)
-    : line.discountType === "percentage"
-      ? Math.round((originalAmount * Math.min(100, numericDiscount)) / 100)
-      : 0
-  return { originalAmount, discountAmount, amount: Math.max(0, originalAmount - discountAmount) }
-}
 const defaultTemplateSettings: TemplateSettings = { accent: "slate", showAddresses: true, showSellerContact: true, showBuyerContact: true, showNotes: true, showQuantityColumn: true, showPaidStamp: true }
 const mobileSteps = ["Details", "From", "Bill to", "Items", "Notes", "Preview"]
 
@@ -201,6 +168,12 @@ export default function Home() {
   const router = useRouter()
   const isAdmin = useAdminStatus()
   const previewRef = useRef<HTMLDivElement>(null)
+  // The stack of page sheets, and the column the stack has to fit inside. The
+  // stack is measured rather than the sheet, because the stack is taller than the
+  // content it holds: each sheet is a full page, and sizing the reserved box to
+  // the content instead clips the last page off the bottom of the preview.
+  const previewPagesRef = useRef<HTMLDivElement>(null)
+  const previewFitRef = useRef<HTMLDivElement>(null)
   const nextLineId = useRef(2)
   const draftId = useRef<string | null>(null)
   const loadedDraftId = useRef<string | null>(null)
@@ -253,7 +226,6 @@ export default function Home() {
   // child element, so a boolean derived from drag depth avoids flicker.
   const [logoDragDepth, setLogoDragDepth] = useState(0)
   const [requestedExport, setRequestedExport] = useState<"PDF" | "DOCX" | null>(null)
-  const [exportPageCount, setExportPageCount] = useState(1)
   const [invoiceNumber, setInvoiceNumber] = useState<string | null>(null)
   const [accountEmail, setAccountEmail] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -535,11 +507,223 @@ export default function Home() {
     return () => window.clearTimeout(handle)
   }, [total])
   const accentStyle = accentStyles[templateSettings.accent]
-  const previewLineGrid = templateSettings.showQuantityColumn
-    ? "grid grid-cols-[minmax(0,1fr)_22px_38px_50px_50px] gap-1 sm:grid-cols-[minmax(0,1fr)_42px_72px_72px_86px] sm:gap-2"
-    : "grid grid-cols-[minmax(0,1fr)_38px_50px_50px] gap-1 sm:grid-cols-[minmax(0,1fr)_82px_72px_86px] sm:gap-2"
-  // A buyer company is deliberately not part of this gate: an invoice may be
-  // billed to an individual, in which case the buyer name carries the heading.
+  const previewLineGrid = "invoice-line-grid grid gap-x-1.5"
+  // The money tracks come from CSS custom properties, whose values are measured
+  // below and shared by every row.
+  //
+  // Two earlier attempts failed, and this sits between them.
+  //
+  // `max-content` sizes a track from the grid container it belongs to, and every
+  // row is its own container — so each row sized its money columns from its own
+  // figures. A row with no discount got a one-character discount column and a row
+  // with `− ৳3,000` got a ten-character one, shifting every column to its right.
+  // The values were right and the columns were not, so the discount and amount
+  // figures landed on a different x in every row.
+  //
+  // Hard-coded rem widths fixed the alignment and broke the figures: `৳12,500,000`
+  // is about 86px and overran a 68px track, colliding with its neighbour. Fixed
+  // widths can only trade one defect for the other.
+  //
+  // Measuring the worst case and publishing it as a variable gets both: one set of
+  // track sizes, identical for every row, and exactly as wide as the widest figure
+  // the document contains. The description absorbs whatever is left over, which is
+  // what the old comment meant by sizing the outer columns to their worst case.
+  //
+  // `subgrid` would express the same thing in CSS, and was rejected on evidence:
+  // html2canvas parses the keyword but does not implement subgrid layout, so the
+  // preview would be right and every exported PDF silently wrong.
+  const previewLineGridQty = templateSettings.showQuantityColumn ? "true" : "false"
+  // The preview is laid out once, at the canonical A4 width, and each page sheet is
+  // a window onto that same flow shifted up by whole content-box heights. That is
+  // the print-layout pattern — the one Google Docs, Word and every PDF viewer use —
+  // and it is the only way to show where the pages actually divide. A single
+  // continuous sheet with a rule drawn across it can only ever tell you a number is
+  // there; it cannot show you page two.
+  //
+  // The margin belongs to the PAGE, not to the flow. Each sheet is a full sheet of
+  // paper and the window sits inside it. The flow carries no padding, which is what
+  // lets page two have a top margin instead of starting flush against the paper
+  // edge the way a sliced strip did.
+  const paperGeometry = usePaperGeometry(previewRef)
+  // The sheet is pinned to SHEET_WIDTH_PX so the document — and therefore the
+  // exported PDF — is laid out identically on every device. On a phone the column
+  // is far narrower than that, and a `w-full` sheet would re-flow the layout to fit,
+  // which is what used to squeeze the description column and inflate the page count.
+  // Scaling instead keeps the layout intact: the sheet is laid out once, at the
+  // canonical width, and simply drawn smaller. See useFittedSheet.
+  const fittedSheet = useFittedSheet(previewRef, previewFitRef, previewPagesRef)
+  const previewPageCount = Math.max(1, paperGeometry.pageCount)
+  // Which page the preview is showing.
+  //
+  // The preview is a WINDOW onto the document, not the document. It shows one
+  // sheet of paper at a time and the reader turns the pages, the way a PDF viewer
+  // does, so the card stays the same size whatever the invoice runs to. It used to
+  // render the whole stack end to end, which meant a 30-line invoice pushed the
+  // Download buttons several screens down and left the reader scrolling a preview
+  // to find out how long their own document was.
+  const [requestedPage, setRequestedPage] = useState(0)
+  // Clamped during render rather than corrected in an effect. Deleting lines can
+  // leave the reader parked on a page that no longer exists, and an effect that
+  // fixed it would render the out-of-range page once first — and cost an extra
+  // pass on every keystroke. Deriving it means the index is always in range by the
+  // time anything reads it, while the requested page is remembered so that growing
+  // the document again returns the reader where they were.
+  const previewPageIndex = Math.min(requestedPage, previewPageCount - 1)
+  const goToPreviewPage = (next: number) => {
+    setRequestedPage(Math.max(0, Math.min(next, previewPageCount - 1)))
+  }
+  // The paper's height is only known once measured, and a page sheet with no
+  // height collapses to nothing on the first paint. The fallback is the same
+  // computed value rather than a literal: a hardcoded "679px" here silently goes
+  // stale the moment SHEET_WIDTH_PX or A4_RATIO changes, and it is the FIRST paint
+  // every visitor sees.
+  const pageFrameHeightCss = paperGeometry.pageFrameHeightPx > 0
+    ? `${paperGeometry.pageFrameHeightPx}px`
+    : `${pageFrameHeightPx()}px`
+
+  // Keep-together: nothing may be cut in half by a page boundary.
+  //
+  // A page boundary falling between "Subtotal" and "Total" is the one break that
+  // is always wrong: the two lines are one figure, and reading them a page apart
+  // makes the invoice look like it lost its arithmetic. A line-item row cut down
+  // the middle is the same defect, and the rows are where it actually happens.
+  //
+  // Word and Google Docs both solve this by refusing to split a block across
+  // pages. Here the document is still one continuous flow, so the equivalent is a
+  // spacer: the offending block is pushed down by exactly enough to clear the
+  // boundary, and everything after it moves with it.
+  //
+  // It has to loop. Pushing one block down shifts everything below it, which can
+  // expose a fresh offender at a later boundary, so this repeats until a pass
+  // finds nothing. Each block's spacer is subtracted before testing, so the
+  // natural (unspaced) position is what gets compared — measuring the already-
+  // spaced position would report the block as clear and the result would flap.
+  const [keepSpacers, setKeepSpacers] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const content = previewRef.current
+    const page = paperGeometry.pageHeightPx
+    if (!content || page <= 0) return
+    const measure = () => {
+      const contentRect = content.getBoundingClientRect()
+      // The flow is the content box, not the sheet, so the scale has to be taken
+      // against the content box width. Dividing by the sheet width reported every
+      // position 10% short and the spacers were computed against a boundary the
+      // exporter never used.
+      const scale = contentRect.width / contentBoxWidthPx() || 1
+      const blocks = Array.from(content.querySelectorAll<HTMLElement>("[data-keep-key]"))
+      const keys = blocks.map((b) => b.dataset.keepKey as string)
+      const measured = blocks.map((b) => (b.getBoundingClientRect().top - contentRect.top) / scale)
+      const heights = blocks.map((b) => b.getBoundingClientRect().height / scale)
+
+      // Strip what is already applied, so every block is judged at its natural
+      // unspaced position. A block's spacer is a `margin-top`, which pushes that
+      // block AND everything after it — so a position is only comparable once the
+      // whole preceding run of spacers has been subtracted. Testing each block in
+      // isolation is what let the pushed row straddle the break again anyway.
+      const natural: number[] = []
+      let applied = 0
+      for (let index = 0; index < blocks.length; index += 1) {
+        applied += keepSpacers[keys[index]] ?? 0
+        natural[index] = measured[index] - applied
+      }
+
+      const next: Record<string, number> = {}
+      for (const key of keys) next[key] = 0
+
+      for (let pass = 0; pass <= blocks.length; pass += 1) {
+        let offender = -1
+        let boundary = 0
+        let shift = 0
+        for (let index = 0; index < blocks.length; index += 1) {
+          shift += next[keys[index]]
+          const top = natural[index] + shift
+          const bottom = top + heights[index]
+          for (let edge = page; edge < bottom - 0.5; edge += page) {
+            if (top < edge - 0.5) {
+              offender = index
+              boundary = edge
+              break
+            }
+          }
+          if (offender >= 0) break
+        }
+        if (offender < 0) break
+        // The spacer that puts this block's top exactly on the boundary.
+
+        let preceding = 0
+        for (let index = 0; index <= offender; index += 1) preceding += next[keys[index]]
+        next[keys[offender]] = Math.ceil(preceding + boundary - natural[offender])
+      }
+
+      setKeepSpacers((current) => {
+        const existing = Object.keys(current)
+        if (existing.length === Object.keys(next).length && existing.every((k) => current[k] === next[k])) return current
+        return next
+      })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(content)
+    measure()
+    return () => observer.disconnect()
+  }, [paperGeometry.pageHeightPx, keepSpacers])
+
+  // Measure the widest figure in each money column and publish it as a custom
+  // property, so every row lays out on the same tracks.
+  //
+  // The widths are written as INLINE styles on each content copy rather than onto
+  // a shared ancestor, because the exporter clones the content into a bare page
+  // frame where no ancestor carries the variables — a value set on the preview
+  // stack would simply not exist in the PDF, and the exported rows would fall back
+  // to the guesses in the CSS.
+  //
+  // Width is taken from a Range over the cell's text rather than from its box. A
+  // grid item's border box is its track, so a cell whose text overruns the track
+  // reports the track and looks like it fits — the same trap that made the masthead
+  // check blind to a real 16px overlap.
+  useEffect(() => {
+    const flow = previewRef.current
+    if (!flow) return
+    const showQty = templateSettings.showQuantityColumn
+
+    const measure = () => {
+      const rows = Array.from(flow.querySelectorAll<HTMLElement>(".invoice-line-grid"))
+      // Cell index of each money column, matching the order the CSS declares.
+      const columns = showQty
+        ? [{ name: "--inv-col-qty", index: 1 }, { name: "--inv-col-price", index: 2 }, { name: "--inv-col-discount", index: 3 }, { name: "--inv-col-amount", index: 4 }]
+        : [{ name: "--inv-col-price", index: 1 }, { name: "--inv-col-discount", index: 2 }, { name: "--inv-col-amount", index: 3 }]
+
+      const widths = new Map(columns.map((c) => [c.name, 0]))
+      const range = document.createRange()
+      for (const row of rows) {
+        const cells = Array.from(row.children)
+        for (const column of columns) {
+          const cell = cells[column.index]
+          if (!cell) continue
+          range.selectNodeContents(cell)
+          const measured = range.getBoundingClientRect().width
+          if (measured > (widths.get(column.name) ?? 0)) widths.set(column.name, measured)
+        }
+      }
+
+      // Every page copy gets the same values. The fallbacks in the CSS stand in
+      // until this runs, so the first paint is briefly narrower rather than
+      // overflowing into its neighbour.
+      for (const copy of Array.from(document.querySelectorAll<HTMLElement>(".invoice-page-content"))) {
+        for (const column of columns) {
+          const width = widths.get(column.name) ?? 0
+          copy.style.setProperty(column.name, width > 0 ? `${Math.ceil(width + 1)}px` : "")
+        }
+      }
+    }
+
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(flow)
+    void document.fonts?.ready.then(measure)
+    return () => observer.disconnect()
+  }, [templateSettings.showQuantityColumn, lines, discount, subtotal, total])
+
+
   const incomplete = !sellerCompanyName.trim() || !sellerName.trim() || !buyerName.trim() || !buyerPhone.trim() || lines.length === 0 || lines.some((line) => !line.description.trim() || line.quantity === "" || Number(line.quantity) < 1 || line.unitPrice === "" || Number(line.unitPrice) < 0 || (line.discountType === "percentage" && Number(line.discountValue) > 100) || (line.discountType === "fixed" && Number(line.discountValue) > Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.unitPrice) || 0)))
   const billTo = useMemo(
     () => resolveBillToParty({ companyName: buyerCompanyName, name: buyerName }),
@@ -559,13 +743,6 @@ export default function Home() {
   // is not a demand for money yet, and a part-paid invoice still is, so stamping
   // either would be a false statement on a document of record.
   const paidStamp = Boolean(invoiceNumber && templateSettings.showPaidStamp && paymentStatus === "paid")
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      if (previewRef.current) setExportPageCount(estimateExportPageCount(previewRef.current))
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [buyerAddress, buyerCompanyName, buyerEmail, buyerName, buyerPhone, discount, dueDate, issueDate, lines, logoUrl, notes, sellerAddress, sellerCompanyName, sellerEmail, sellerName, sellerPhone, templateSettings])
 
   useEffect(() => {
     // Due-before-issue is never persisted: autosaving it would store a schedule
@@ -1260,6 +1437,37 @@ export default function Home() {
     })
   }, [accountEmail, datesInvalid, exporting, incomplete, invoiceNumber, loadingDraft, requestedExport])
 
+  // The document itself, laid out once and then drawn once per page sheet.
+  //
+  // The PAID stamp lives inside the document rather than being added at export
+  // time, because lib/invoice/export.ts rasterises this element: whatever renders
+  // here is exactly what lands in the PDF and the DOCX.
+  const invoiceSheetContent = (
+    <>
+                          {/* The PAID stamp lives inside the preview rather than being
+                              added at export time, because lib/invoice/export.ts
+                              screenshots this element: whatever renders here is
+                              exactly what lands in the PDF and the DOCX. It is
+                              decorative, so it is hidden from assistive tech and
+                              kept out of the tab order, and pointer-events-none so
+                              it never blocks the controls behind it. */}
+                          {paidStamp && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center select-none">
+                            <span className="-rotate-[28deg] whitespace-nowrap border-[6px] border-emerald-600/25 px-8 py-2 font-heading text-6xl font-bold uppercase tracking-[0.18em] text-emerald-600/25 sm:text-7xl">Paid</span>
+                          </div>}
+                          <div className={`relative z-[1] flex items-start justify-between gap-6 border-b-2 pb-4 ${accentStyle.rule}`}><div className="min-w-0">{logoUrl && <Image src={logoUrl} alt="Seller logo" width={96} height={48} sizes="96px" unoptimized className="mb-2.5 h-auto w-auto max-h-12 max-w-24 object-contain object-left" />}<p className={`text-2xl font-bold tracking-tight ${accentStyle.heading}`}>{sellerCompanyName || "Your company name"}</p><p className="mt-0.5 text-sm font-medium text-slate-600">{sellerName || "Seller name"}</p>{templateSettings.showAddresses && <p className="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{sellerAddress || "Your address"}</p>}{templateSettings.showSellerContact && (sellerEmail || sellerPhone) && <p className="mt-1 text-xs text-slate-500">{[sellerEmail, sellerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="shrink-0 text-right"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Invoice</p><p className="mt-0.5 text-2xl font-bold tracking-tight text-slate-900">{invoiceNumber || "DRAFT"}</p></div></div>                          {/* An invoice raised to settle a balance says so on its face,
+                              with the arithmetic, so the reader can see it is not a
+                              second charge for the same work. */}
+                          {carriedForward && <div className="relative z-[1] mb-6 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-5 text-slate-600">
+                            <p className="font-semibold uppercase tracking-[0.14em] text-slate-500">Balance of {carriedForward.invoiceNumber ?? "a previous invoice"}</p>
+                            <div className="mt-1.5 space-y-0.5">
+                              <div className="flex justify-between gap-4"><span>Original invoice</span><span className="font-medium"><MoneyText text={formatMoney(carriedForward.originalTotal)} /></span></div>
+                              <div className="flex justify-between gap-4"><span>Already received</span><span className="font-medium"><MoneyText text={`− ${formatMoney(carriedForward.received)}`} /></span></div>
+                              <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
+                            </div>
+                          </div>}
+                          <div className="grid gap-3 border-b border-slate-200 py-4 text-sm sm:grid-cols-[1.55fr_1fr]"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Bill to</p><p className="mt-1.5 text-[0.95rem] font-bold">{billTo.heading}</p>{billTo.contact && <p className="mt-0.5 text-sm font-medium text-slate-600">{billTo.contact}</p>}{templateSettings.showAddresses && <p className="mt-0.5 whitespace-pre-line text-xs leading-5 text-slate-500">{buyerAddress || "Customer address"}</p>}{templateSettings.showBuyerContact && (buyerEmail || buyerPhone) && <p className="mt-0.5 text-xs text-slate-500">{[buyerEmail, buyerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="sm:text-right"><div className="flex justify-between gap-2 text-xs sm:justify-end"><span className="whitespace-nowrap text-slate-500">Issue date</span><span className="whitespace-nowrap font-medium">{formatDate(issueDate)}</span></div><div className="mt-1.5 flex justify-between gap-2 text-xs sm:justify-end"><span className="whitespace-nowrap text-slate-500">Due date</span><span className="whitespace-nowrap font-medium">{formatDate(dueDate)}</span></div></div></div><div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span><span className="text-right">Discount</span><span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span><span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span><span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && <div className="mt-8 border-t border-slate-200 pt-5 text-xs leading-5 text-slate-500"><p className="mb-1 font-semibold text-slate-700">Notes</p><p className="whitespace-pre-line">{notes}</p></div>}
+    </>
+  )
   return (
     <main className="min-h-screen bg-transparent text-foreground">
       <header className="glass-header sticky top-0 z-40">
@@ -1349,7 +1557,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice. Fields marked with an asterisk are required." /><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <><Button className="h-11 sm:h-9" variant="outline" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading⬦" : "Load saved profile"}</Button><Button className="h-11 sm:h-9" variant="default" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving⬦" : "Save as profile"}</Button></> : <Button className="h-11 sm:h-9" variant="outline" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input aria-required="true" autoComplete="organization" className="field" id="seller-company-name" maxLength={500} placeholder="Your company name" required value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input aria-required="true" autoComplete="name" className="field" id="seller-name" maxLength={500} placeholder="Your full name" required value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email" optional><input autoComplete="email" className="field" id="seller-email" inputMode="email" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone" optional><input autoComplete="tel" className="field" id="seller-phone" inputMode="tel" maxLength={100} placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2" optional><textarea autoComplete="street-address" className="field min-h-24 resize-y" id="seller-address" maxLength={2000} placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground" id="seller-logo-help">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className={cn("flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted/50 transition", logoDragDepth > 0 ? "border-primary bg-accent ring-2 ring-ring/25" : "border-dashed border-border")} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }}>{logoUrl ? <Image alt="Current company logo" className="h-auto w-auto max-h-full max-w-full object-contain" height={96} src={logoUrl} unoptimized width={96} /> : <span className="px-2 text-center text-xs text-muted-foreground">{logoDragDepth > 0 ? "Drop to upload" : "No logo"}</span>}</div><div className="min-w-0 flex-1 space-y-3"><input accept="image/png,image/jpeg,image/webp" aria-describedby="seller-logo-help seller-logo-file" aria-invalid={logoError ? true : undefined} className="block max-w-full min-h-11 text-sm text-muted-foreground file:mr-3 file:min-h-11 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" disabled={uploadingLogo || Boolean(invoiceNumber)} id="seller-logo-upload" onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }} type="file" />{chosenLogoName && <p className="text-xs text-muted-foreground" id="seller-logo-file">Selected: {chosenLogoName}</p>}<div className="flex flex-wrap gap-2">{sessionLogo && <Button className="h-11 sm:h-9" variant="outline" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={promoteSessionLogo}>Save session logo to my account</Button>}{logoUrl && <Button className="h-11 sm:h-9" variant="destructive" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{sessionLogo && <p className="text-xs text-muted-foreground">Showing the session logo. Save it to your account to keep it permanently.</p>}{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo⬦" : `Uploading logo⬦ ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber ? <p className="text-xs text-muted-foreground">This invoice is finalized, so the logo is locked. Logo changes apply to new invoices; this one keeps its snapshot.</p> : uploadingLogo ? null : <p className="text-xs text-muted-foreground">Choose a file or drop an image onto the preview.</p>}</div></div> : <div className="space-y-3"><div className="flex items-center gap-4"><div className={cn("flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted/50 transition", logoDragDepth > 0 ? "border-primary bg-accent ring-2 ring-ring/25" : "border-dashed border-border")} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }}>{logoUrl ? <Image src={logoUrl} alt="Session company logo" width={96} height={96} unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">{logoDragDepth > 0 ? "Drop to upload" : "No logo"}</span>}</div><div className="min-w-0"><p className="text-sm font-medium">Session logo</p><p className="mt-1 text-xs text-muted-foreground">{sessionLogo ? `Using ${sessionLogo.name} in this browser only.` : "Optional. Add one to brand this invoice."}</p></div></div><input id="seller-logo-upload-guest" aria-describedby="seller-logo-help seller-logo-file-guest" className="block max-w-full min-h-11 text-sm text-muted-foreground file:mr-3 file:min-h-11 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload a session logo" aria-invalid={logoError ? true : undefined} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }} />{chosenLogoName && <p className="text-xs text-muted-foreground" id="seller-logo-file-guest">Selected: {chosenLogoName}</p>}<div className="flex flex-wrap items-center gap-2">{sessionLogo && <Button className="h-11 sm:h-9" variant="destructive" type="button" onClick={() => void removeGuestLogo()}>Remove</Button>}<Button className="h-11 sm:h-9" variant="outline" type="button" onClick={() => router.push("/auth/login")}>Sign in to keep a logo</Button></div><p className="rounded-lg border border-amber-400/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-950">Guest logos are kept in this browser only. Nothing is uploaded, and the logo disappears when you clear your browser data. Sign in to save it to your account and reuse it on every invoice.</p>{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}</div>}</div></div>
+            <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 1 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="From" title="Your company" description="Your company name is the main seller heading on the invoice. Fields marked with an asterisk are required." /><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <><Button className="h-11 sm:h-9" variant="outline" type="button" disabled={loadingProfile || savingProfile} onClick={() => void loadSellerProfile()}>{loadingProfile ? "Loading⬦" : "Load saved profile"}</Button><Button className="h-11 sm:h-9" variant="default" type="button" disabled={loadingProfile || savingProfile} onClick={() => void saveSellerProfile()}>{savingProfile ? "Saving⬦" : "Save as profile"}</Button></> : <Button className="h-11 sm:h-9" variant="outline" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved profile</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{sellerProfileStatus}</span></div></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Company name" htmlFor="seller-company-name" required><input aria-required="true" autoComplete="organization" className="field" id="seller-company-name" maxLength={500} placeholder="Your company name" required value={sellerCompanyName} onChange={(event) => setSellerCompanyName(event.target.value)} /></Field><Field label="Seller name" htmlFor="seller-name" required><input aria-required="true" autoComplete="name" className="field" id="seller-name" maxLength={500} placeholder="Your full name" required value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></Field><Field label="Email" htmlFor="seller-email" optional><input autoComplete="email" className="field" id="seller-email" inputMode="email" type="email" placeholder="you@example.com" value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="seller-phone" optional><input autoComplete="tel" className="field" id="seller-phone" inputMode="tel" maxLength={100} placeholder="01XXXXXXXXX" value={sellerPhone} onChange={(event) => setSellerPhone(event.target.value)} /></Field><Field label="Address" htmlFor="seller-address" className="sm:col-span-2" optional><textarea autoComplete="street-address" className="field min-h-24 resize-y" id="seller-address" maxLength={2000} placeholder="Your address" value={sellerAddress} onChange={(event) => setSellerAddress(event.target.value)} /></Field></div><div className="mt-6 border-t border-border pt-6"><div className="mb-4"><h3 className="font-semibold">Company logo</h3><p className="mt-1 text-sm text-muted-foreground" id="seller-logo-help">Use a PNG, JPEG, or WebP logo up to 2 MB. It appears on new invoices and stays private.</p></div>{accountEmail ? <div className="flex flex-col gap-4 sm:flex-row sm:items-start"><div className={cn("flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted/50 transition", logoDragDepth > 0 ? "border-primary bg-accent ring-2 ring-ring/25" : "border-dashed border-border")} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }}>{logoUrl ? <Image alt="Current company logo" className="h-auto w-auto max-h-full max-w-full object-contain" height={96} sizes="96px" src={logoUrl} unoptimized width={96} /> : <span className="px-2 text-center text-xs text-muted-foreground">{logoDragDepth > 0 ? "Drop to upload" : "No logo"}</span>}</div><div className="min-w-0 flex-1 space-y-3"><input accept="image/png,image/jpeg,image/webp" aria-describedby="seller-logo-help seller-logo-file" aria-invalid={logoError ? true : undefined} className="block max-w-full min-h-11 text-sm text-muted-foreground file:mr-3 file:min-h-11 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" disabled={uploadingLogo || Boolean(invoiceNumber)} id="seller-logo-upload" onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }} type="file" />{chosenLogoName && <p className="text-xs text-muted-foreground" id="seller-logo-file">Selected: {chosenLogoName}</p>}<div className="flex flex-wrap gap-2">{sessionLogo && <Button className="h-11 sm:h-9" variant="outline" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={promoteSessionLogo}>Save session logo to my account</Button>}{logoUrl && <Button className="h-11 sm:h-9" variant="destructive" type="button" disabled={uploadingLogo || Boolean(invoiceNumber)} onClick={() => void removeSellerLogo()}>Remove logo</Button>}</div>{sessionLogo && <p className="text-xs text-muted-foreground">Showing the session logo. Save it to your account to keep it permanently.</p>}{uploadingLogo && <div aria-label="Logo upload progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={logoUploadProgress} aria-live="polite"><div className="h-2 overflow-hidden rounded-lg bg-muted"><div className="h-full rounded-lg bg-[#2e9be6] shadow-[0_0_8px_#2e9be6] transition-[width] duration-200" style={{ width: `${Math.max(8, logoUploadProgress)}%` }} /></div><p className="mt-1 text-xs text-muted-foreground">{logoUploadProgress >= 100 ? "Finalizing logo⬦" : `Uploading logo⬦ ${logoUploadProgress}%`}</p></div>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{invoiceNumber ? <p className="text-xs text-muted-foreground">This invoice is finalized, so the logo is locked. Logo changes apply to new invoices; this one keeps its snapshot.</p> : uploadingLogo ? null : <p className="text-xs text-muted-foreground">Choose a file or drop an image onto the preview.</p>}</div></div> : <div className="space-y-3"><div className="flex items-center gap-4"><div className={cn("flex size-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted/50 transition", logoDragDepth > 0 ? "border-primary bg-accent ring-2 ring-ring/25" : "border-dashed border-border")} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }}>{logoUrl ? <Image src={logoUrl} alt="Session company logo" width={96} height={96} sizes="96px" unoptimized className="h-auto w-auto max-h-full max-w-full object-contain" /> : <span className="px-2 text-center text-xs text-muted-foreground">{logoDragDepth > 0 ? "Drop to upload" : "No logo"}</span>}</div><div className="min-w-0"><p className="text-sm font-medium">Session logo</p><p className="mt-1 text-xs text-muted-foreground">{sessionLogo ? `Using ${sessionLogo.name} in this browser only.` : "Optional. Add one to brand this invoice."}</p></div></div><input id="seller-logo-upload-guest" aria-describedby="seller-logo-help seller-logo-file-guest" className="block max-w-full min-h-11 text-sm text-muted-foreground file:mr-3 file:min-h-11 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload a session logo" aria-invalid={logoError ? true : undefined} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} onDragEnter={(event) => { event.preventDefault(); setLogoDragDepth((depth) => depth + 1) }} onDragLeave={(event) => { event.preventDefault(); setLogoDragDepth((depth) => Math.max(0, depth - 1)) }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy" }} onDrop={(event) => { event.preventDefault(); setLogoDragDepth(0); chooseLogo(event.dataTransfer.files?.[0]) }} />{chosenLogoName && <p className="text-xs text-muted-foreground" id="seller-logo-file-guest">Selected: {chosenLogoName}</p>}<div className="flex flex-wrap items-center gap-2">{sessionLogo && <Button className="h-11 sm:h-9" variant="destructive" type="button" onClick={() => void removeGuestLogo()}>Remove</Button>}<Button className="h-11 sm:h-9" variant="outline" type="button" onClick={() => router.push("/auth/login")}>Sign in to keep a logo</Button></div><p className="rounded-lg border border-amber-400/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-950">Guest logos are kept in this browser only. Nothing is uploaded, and the logo disappears when you clear your browser data. Sign in to save it to your account and reuse it on every invoice.</p>{logoError && <p className="text-sm text-destructive" role="alert">{logoError}</p>}{logoMessage && <p className="text-sm text-emerald-800" role="status">{logoMessage}</p>}</div>}</div></div>
 
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 2 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="Bill to" title="Who you are billing" description="Bill a company or a person. Company name is optional." /><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void loadCustomers()}>{loadingCustomers ? "Loading⬦" : "Load saved customers"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void saveCustomer()}>{savingCustomer ? "Saving⬦" : "Save customer"}</Button>{selectedCustomerId && <span className="text-xs text-muted-foreground">updates this saved customer</span>}</> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved customers</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{customerStatus}</span></div></div><div className="mb-5 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-xs"><span className="font-medium uppercase tracking-wide text-muted-foreground">Bill-to heading</span><span aria-live="polite" className={`ml-2 font-semibold ${hasBillToParty ? "text-foreground" : "font-normal text-muted-foreground"}`}>{hasBillToParty ? billTo.heading : "Not set yet"}</span>{headingNote && <span className="mt-1 block text-muted-foreground">{headingNote}</span>}</div><div className="grid gap-5 sm:grid-cols-2"><Field label="Buyer name" htmlFor="buyer-name" required><input autoComplete="name" className="field" id="buyer-name" maxLength={500} placeholder="e.g. Rahim Uddin" required value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field><Field label="Company name" htmlFor="buyer-company-name" optional><input autoComplete="organization" className="field" id="buyer-company-name" maxLength={500} placeholder="e.g. Acme Ltd" value={buyerCompanyName} onChange={(event) => setBuyerCompanyName(event.target.value)} /></Field><Field label="Email" htmlFor="buyer-email" optional><input autoComplete="email" className="field" id="buyer-email" inputMode="email" type="email" placeholder="customer@example.com" value={buyerEmail} onChange={(event) => setBuyerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="buyer-phone" required><input autoComplete="tel" className="field" id="buyer-phone" inputMode="tel" maxLength={100} placeholder="01XXXXXXXXX" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} required /></Field><Field label="Address" htmlFor="buyer-address" className="sm:col-span-2" optional><textarea autoComplete="street-address" className="field min-h-24 resize-y" id="buyer-address" maxLength={2000} placeholder="Customer address" value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} /></Field></div></div>
 
@@ -1443,34 +1651,102 @@ export default function Home() {
 
           <section className={`min-w-0 xl:sticky xl:top-[6.5rem] ${mobileStep === 5 ? "" : "hidden"} xl:block`} aria-label="Invoice preview">
             <div className="surface-raised overflow-hidden p-4 xl:p-5">
-              <div className="mb-5 flex items-center justify-between gap-4 px-1"><div><p className="eyebrow">Live document</p><h2 className="mt-2 font-heading text-2xl font-medium tracking-[-0.02em]">A4 portrait</h2><p className="mt-1 text-xs text-muted-foreground" role="status">PDF/DOCX estimate: {exportPageCount} page{exportPageCount === 1 ? "" : "s"}</p></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void openTemplateSettings()}><RotateCcw data-icon="inline-start" />{templateOpen ? "Close customize" : "Customize"}</Button></div>
+              <div className="mb-5 flex items-center justify-between gap-4 px-1"><div><p className="eyebrow">Live document</p><h2 className="mt-2 font-heading text-2xl font-medium tracking-[-0.02em]">A4 portrait</h2><p className="mt-1 text-xs text-muted-foreground" role="status">{previewPageCount} page{previewPageCount === 1 ? "" : "s"} in the PDF and DOCX</p></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void openTemplateSettings()}><RotateCcw data-icon="inline-start" />{templateOpen ? "Close customize" : "Customize"}</Button></div>
             {templateOpen && <div className="mb-4 scroll-mb-24 scroll-mt-20 rounded-xl border border-border/80 bg-muted/35 p-4"><div className="mb-4 flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Invoice display</p><p className="mt-1 text-sm font-medium">Choose what appears on the invoice</p></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void saveTemplateSettings}>{templateSaving ? "Saving⬦" : accountEmail ? "Save template" : "Done"}</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-2 block text-xs font-medium text-muted-foreground">Accent color</span><select className="field" value={templateSettings.accent} onChange={(event) => setTemplateSettings((current) => ({ ...current, accent: event.target.value as TemplateSettings["accent"] }))}><option value="slate">Slate</option><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="indigo">Indigo</option></select></label><div className="space-y-2 text-sm text-foreground/80"><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showAddresses} onChange={(event) => setTemplateSettings((current) => ({ ...current, showAddresses: event.target.checked }))} />Show addresses</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showSellerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showSellerContact: event.target.checked }))} />Show seller contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showBuyerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showBuyerContact: event.target.checked }))} />Show customer contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showNotes} onChange={(event) => setTemplateSettings((current) => ({ ...current, showNotes: event.target.checked }))} />Show notes</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showQuantityColumn} onChange={(event) => setTemplateSettings((current) => ({ ...current, showQuantityColumn: event.target.checked }))} />Show quantity column</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showPaidStamp} onChange={(event) => setTemplateSettings((current) => ({ ...current, showPaidStamp: event.target.checked }))} />Stamp paid invoices</label></div></div></div>}
               <div className="rounded-xl border border-stone-300/70 bg-[#e9e5dc] p-3 shadow-inner sm:p-5">
 
-                        <div ref={previewRef} className="invoice-paper relative mx-auto max-w-[720px] overflow-hidden rounded-none border border-slate-200 bg-white p-5 shadow-[0_35px_80px_-38px_rgba(28,38,33,0.5)] ring-1 ring-stone-900/5 sm:p-8">
-                          {/* The PAID stamp lives inside the preview rather than being
-                              added at export time, because lib/invoice/export.ts
-                              screenshots this element: whatever renders here is
-                              exactly what lands in the PDF and the DOCX. It is
-                              decorative, so it is hidden from assistive tech and
-                              kept out of the tab order, and pointer-events-none so
-                              it never blocks the controls behind it. */}
-                          {paidStamp && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center select-none">
-                            <span className="-rotate-[28deg] whitespace-nowrap border-[6px] border-emerald-600/25 px-8 py-2 font-heading text-6xl font-bold uppercase tracking-[0.18em] text-emerald-600/25 sm:text-7xl">Paid</span>
-                          </div>}
-                          <div className={`relative z-[1] flex items-start justify-between gap-6 border-b-2 pb-7 ${accentStyle.rule}`}><div>{logoUrl && <Image src={logoUrl} alt="Seller logo" width={96} height={48} unoptimized className="mb-3 h-auto w-auto max-h-12 max-w-24 object-contain object-left" />}<p className={`text-2xl font-bold tracking-tight ${accentStyle.heading}`}>{sellerCompanyName || "Your company name"}</p><p className="mt-1 text-sm font-medium text-slate-600">{sellerName || "Seller name"}</p>{templateSettings.showAddresses && <p className="mt-2 max-w-[220px] whitespace-pre-line text-xs leading-5 text-slate-500">{sellerAddress || "Your address"}</p>}{templateSettings.showSellerContact && (sellerEmail || sellerPhone) && <p className="mt-2 text-xs text-slate-500">{[sellerEmail, sellerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="text-right"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Invoice</p><p className="mt-1 text-xl font-bold tracking-tight text-slate-900">{invoiceNumber || "DRAFT"}</p></div></div>                          {/* An invoice raised to settle a balance says so on its face,
-                              with the arithmetic, so the reader can see it is not a
-                              second charge for the same work. */}
-                          {carriedForward && <div className="relative z-[1] mb-6 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-5 text-slate-600">
-                            <p className="font-semibold uppercase tracking-[0.14em] text-slate-500">Balance of {carriedForward.invoiceNumber ?? "a previous invoice"}</p>
-                            <div className="mt-1.5 space-y-0.5">
-                              <div className="flex justify-between gap-4"><span>Original invoice</span><span className="font-medium"><MoneyText text={formatMoney(carriedForward.originalTotal)} /></span></div>
-                              <div className="flex justify-between gap-4"><span>Already received</span><span className="font-medium"><MoneyText text={`− ${formatMoney(carriedForward.received)}`} /></span></div>
-                              <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
+                        {/* The scale is applied HERE rather than on the sheet: the page
+                            stack is laid out once at the canonical A4 width and then
+                            drawn smaller, so a narrow phone column re-flows nothing. */}
+                        <div ref={previewFitRef} className="mx-auto" style={{ width: fittedSheet.width, height: fittedSheet.height }}>
+                          {/* The scale belongs HERE, on the stack, and nowhere else.
+                              Without it the fit box is merely RESERVED at the scaled
+                              size while the 480px sheet inside it is drawn at full
+                              size: on a phone the card clipped the right-hand columns
+                              and the totals block away, and because the card did the
+                              clipping the page still reported no horizontal overflow.
+                              Sizing the box and scaling the content are two halves of
+                              one operation — doing only the first changes nothing you
+                              can see. `top left` anchors the scaled stack in the box
+                              that was reserved for it. */}
+                          <div
+                            ref={previewPagesRef}
+                            className="invoice-pages"
+                            style={{
+                              width: SHEET_WIDTH_PX,
+                              transform: `scale(${fittedSheet.scale})`,
+                              transformOrigin: "top left",
+                            }}
+                          >
+                            {/* ONE sheet, always. The stack used to render every page
+                                end to end, so the card grew with the document and the
+                                reader had to scroll a preview to see it. This is a
+                                window: the same single sheet is translated by a whole
+                                content box to bring the requested page into it. */}
+                            <div
+                              className="invoice-page"
+                              style={{ height: pageFrameHeightCss }}
+                            >
+                              {/* The clip window. It exists because `overflow` clips to an
+                                  element's own box: the page must clip at the CONTENT box
+                                  (631px) while the paper is 679px tall, and only a separate
+                                  element can hold that boundary. Without it the foot of every
+                                  page showed a sliced-off row belonging to the next one. */}
+                              <div
+                                className="invoice-page-clip"
+                                style={{
+                                  top: PAGE_MARGIN_PX,
+                                  insetInlineStart: PAGE_MARGIN_PX,
+                                  width: contentBoxWidthPx(),
+                                  height: contentBoxHeightPx(),
+                                }}
+                              >
+                                <div
+                                  className="invoice-page-content invoice-paper @container relative"
+                                  ref={previewRef}
+                                  style={{
+                                    width: contentBoxWidthPx(),
+                                    transform: `translateY(${-previewPageIndex * paperGeometry.pageHeightPx}px)`,
+                                  }}
+                                >
+                                  {invoiceSheetContent}
+                                </div>
+                              </div>
                             </div>
-                          </div>}
-                          <div className="grid gap-6 border-b border-slate-200 py-7 text-sm sm:grid-cols-2"><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Bill to</p><p className="mt-2 text-base font-bold">{billTo.heading}</p>{billTo.contact && <p className="mt-1 text-sm font-medium text-slate-600">{billTo.contact}</p>}{templateSettings.showAddresses && <p className="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{buyerAddress || "Customer address"}</p>}{templateSettings.showBuyerContact && (buyerEmail || buyerPhone) && <p className="mt-1 text-xs text-slate-500">{[buyerEmail, buyerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="sm:text-right"><div className="flex justify-between gap-6 sm:justify-end"><span className="text-slate-500">Issue date</span><span className="font-medium">{formatDate(issueDate)}</span></div><div className="mt-2 flex justify-between gap-6 sm:justify-end"><span className="text-slate-500">Due date</span><span className="font-medium">{formatDate(dueDate)}</span></div></div></div><div className="py-5"><div className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span><span className="text-right">Discount</span><span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span><span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span><span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && <div className="mt-8 border-t border-slate-200 pt-5 text-xs leading-5 text-slate-500"><p className="mb-1 font-semibold text-slate-700">Notes</p><p className="whitespace-pre-line">{notes}</p></div>}</div>
-              </div>
+                          </div>
+                        </div>
+                        {/* Pager. Below the paper rather than above it, because the page
+                            number belongs to the page it labels. The stepper is only
+                            rendered for a real multipage document — on a one-page invoice
+                            "Page 1 of 1" is noise. */}
+                        {previewPageCount > 1 && (
+                          <div className="mt-4 flex items-center justify-center gap-3" role="group" aria-label="Preview pages">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              type="button"
+                              aria-label="Previous page"
+                              disabled={previewPageIndex === 0}
+                              onClick={() => goToPreviewPage(previewPageIndex - 1)}
+                            >
+                              <ChevronLeft data-icon="inline-start" />Prev
+                            </Button>
+                            <p className="min-w-[7.5rem] text-center text-xs font-medium tabular-nums text-muted-foreground" role="status">
+                              Page {previewPageIndex + 1} of {previewPageCount}
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              type="button"
+                              aria-label="Next page"
+                              disabled={previewPageIndex >= previewPageCount - 1}
+                              onClick={() => goToPreviewPage(previewPageIndex + 1)}
+                            >
+                              Next<ChevronRight data-icon="inline-end" />
+                            </Button>
+                          </div>
+                        )}
+            </div>
               <div className="mt-5 border-t border-border/80 pt-5">{accountEmail && !invoiceNumber && <Button type="button" className="mb-3 h-11 w-full" disabled={finalizing || exporting || savingDraft} onClick={finalizeInvoice}>{finalizing ? "Finalizing⬦" : savingDraft ? "Saving draft⬦" : "Finalize invoice"}</Button>}<div className="grid gap-3 sm:grid-cols-2"><Button type="button" variant="outline" className="h-11" disabled={exporting || finalizing} onClick={() => exportInvoice("PDF")}><FileDown data-icon="inline-start" />Download PDF</Button><Button type="button" className="h-11" disabled={exporting || finalizing} onClick={() => exportInvoice("DOCX")}><FileDown data-icon="inline-start" />Download DOCX</Button></div>{message && <p className="mt-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground" role="status">{message}</p>}<p className="mt-3 text-center text-xs text-muted-foreground">{accountEmail ? "Finalized invoices stay in your history, where you can edit them or record a payment." : "Sign in later to save invoice history across devices."}</p></div>
             </div>
 

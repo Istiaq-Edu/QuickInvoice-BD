@@ -15,7 +15,10 @@
     "test:e2e": "playwright test",
     "audit:items": "node scripts/audit-items-a11y.mjs",
     "debug:logo": "node scripts/debug-logo-crop.mjs",
-    "check:taka": "node scripts/check-tabular-nums.mjs"
+    "check:taka": "node scripts/check-tabular-nums.mjs",
+    "check:table": "node scripts/check-masthead.mjs",
+    "check:pagination": "node scripts/verify-pagination.mjs",
+    "capture:preview": "node scripts/capture-preview.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

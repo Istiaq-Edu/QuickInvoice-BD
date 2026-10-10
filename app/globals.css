@@ -447,7 +447,180 @@
   }
 }
 
+/*
+ * The paper deliberately does NOT declare `aspect-ratio`.
+ *
+ * It used to pin the sheet to exactly one A4 page (1 / 1.414). Because the rule
+ * was unlayered it outranked every Tailwind utility, so the box could never grow
+ * with its content, and the surrounding card's `overflow-hidden` clipped
+ * whatever ran past the first page. That clipped the live preview *and* the
+ * html2canvas capture, so a seven-line invoice silently lost its totals from the
+ * PDF and every page after the first was a blank sheet. Height is now driven by
+ * the content, and pageGeometry decides where the breaks fall.
+ */
 .invoice-paper {
-  aspect-ratio: 1 / 1.414;
   color: #1c1917;
+}
+
+/*
+ * Narrow-sheet rules, keyed to the SHEET rather than the viewport.
+ *
+ * A `sm:` variant cannot express these, because it is a media query on the
+ * viewport and fired at every viewport >= 640px however narrow the sheet was —
+ * which is how a 480px sheet ended up carrying the desktop column widths. These
+ * are container queries against the `@container` on `.invoice-paper`, so they
+ * respond to the paper itself and can never disagree with the export.
+ *
+ * The sheet is now pinned to `SHEET_WIDTH_PX` (480px) on every device and scaled
+ * to fit, so these thresholds are a SAFETY NET for a sheet narrower than the
+ * canonical width — a future container, an embedded preview, a zoomed browser —
+ * rather than a routine path. In the shipped app the paper is always 480px
+ * (30rem) and neither rule below applies, which is the point: every column
+ * including the discount is now always shown. That rule used to hide the discount
+ * below 21rem, which meant a phone preview silently disagreed with the exported
+ * PDF. The discount is the one column that was disappearing, and it is now
+ * impossible to drop it on screen without changing the document itself.
+ */
+/*
+ * The line-item grid's money columns.
+ *
+ * The tracks are NOT `max-content` and NOT hard-coded. `max-content` sizes a
+ * track from its own grid container, and every row is its own container, so each
+ * row sized its money columns from its own figures — a row showing `—` and a row
+ * showing `− ৳3,000` laid their columns out differently and the discount figures
+ * and amounts landed on a different x in every row. Hard-coded rem widths fixed
+ * the alignment and broke the figures instead, because `৳12,500,000` is about
+ * 86px and overran the track, colliding with its neighbour.
+ *
+ * So the widths are MEASURED in app/page.tsx and published here as custom
+ * properties: the widest figure in each column, identical for every row. One set
+ * of tracks, exactly wide enough, and the description absorbs what is left over.
+ *
+ * The fallbacks are what the grid uses before the first measurement lands, and
+ * in the exporter's clone if the measurement were ever lost. They are deliberately
+ * narrow: too narrow reads as a crowded column, too wide pushes the description
+ * into a sliver.
+ */
+.invoice-line-grid {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--inv-col-qty, 2.5rem)
+    var(--inv-col-price, 3.75rem)
+    var(--inv-col-discount, 4.25rem)
+    var(--inv-col-amount, 4.25rem);
+}
+
+.invoice-line-grid[data-qty="false"] {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--inv-col-price, 3.75rem)
+    var(--inv-col-discount, 4.25rem)
+    var(--inv-col-amount, 4.25rem);
+}
+
+@container (max-width: 26rem) {
+  .invoice-paper .invoice-line-grid {
+    gap-x: 0.25rem;
+    font-size: 10px;
+  }
+}
+
+@container (max-width: 21rem) {
+  /* The figures step down before anything is removed: the discount is real data
+     on the document, so it is the last thing to go and never does in the app.
+     The tracks keep coming from the same variables — the whole point is that
+     every row computes identical columns, and a narrower sheet has to keep that
+     — so only the type size changes here. */
+  .invoice-paper .invoice-line-grid {
+    font-size: 9px;
+  }
+}
+
+/*
+ * Paginated preview: each page is its own sheet.
+ *
+ * This is the print-layout pattern — the one Google Docs, Word and every PDF
+ * viewer use. A single continuous sheet with a rule drawn across it can only
+ * ever tell you that a break exists somewhere; it cannot show you page two, and
+ * when the break landed inside the totals block the rule struck through the
+ * "Subtotal" figure and read as a rendering fault.
+ *
+ * So the document is laid out once, at the canonical width, and each page sheet
+ * is a window onto that same layout shifted up by whole pages. The sheets are
+ * separated by a real gap, which is what makes the pagination legible at a glance
+ * and gives the reader a place to rest between pages.
+ *
+ * The gap is `page-gap` and nothing else: the old `.paper-break` rules are gone,
+ * because there is no longer a break to draw. Page 1 is the only sheet exposed to
+ * assistive technology; the rest are decorative repeats of content the reader has
+ * already been given, and announcing an invoice three times is worse than not
+ * paginating it at all.
+ */
+.invoice-page {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  margin-bottom: 20px;
+  box-shadow:
+    0 18px 40px -22px rgb(28 38 33 / 0.45),
+    0 1px 2px rgb(28 38 33 / 0.08);
+}
+
+.invoice-page:last-child {
+  margin-bottom: 0;
+}
+
+/* The 24px inset is NOT written here. It is PAGE_MARGIN_PX, applied as an inline
+ * style by app/page.tsx for the same reason the --inv-col-* widths are: the
+ * exporter clones this content into a bare page frame where nothing inherited from
+ * a stylesheet ancestor exists, so a value that only lived in CSS would silently
+ * fall back to a guess in the PDF. It used to be hardcoded to 24px in both places,
+ * which is two sources of truth for one number — change the constant and the
+ * preview would keep indenting by the old margin while the exporter used the new
+ * one, and the two would disagree by exactly the difference. */
+/* The clip must happen at the CONTENT box, not at the paper.
+ *
+ * The page advances the flow by `contentBoxHeightPx()` (631px) while the paper is
+ * 679px, so the frame carries 24px of margin top and bottom. Clipping at the frame
+ * therefore left a 48px band at the foot of every page in which the flow's next
+ * page was still drawn: a line-item row appeared sliced off by the page edge, and
+ * then appeared again, whole, at the top of the following page. It was in the
+ * exported PDF too, for the same reason — the capture host was the full frame.
+ *
+ * `overflow` clips to an element's own padding box, so putting the inset on the
+ * page as padding does not help. The clip needs its own element, sized to the
+ * content box, sitting between the paper and the sliding flow. */
+.invoice-page-clip {
+  position: absolute;
+  inset-inline-start: 24px;
+  top: 24px;
+  overflow: hidden;
+}
+
+.invoice-page-content {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+}
+
+.invoice-pages {
+  display: flex;
+  flex-direction: column;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* The page markers are a preview affordance; Ctrl+P should get the document. */
+  .paper-break {
+    display: none;
+  }
+
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }

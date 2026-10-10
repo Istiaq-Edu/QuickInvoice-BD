@@ -478,7 +478,7 @@ export default function InvoiceHistoryPage() {
                       credit the seller needs to refund or re-apply. Gating on
                       !isSettled would hide it, because an overpayment is settled by
                       definition. */}
-                  {(!settlement.isSettled || settlement.isOverpaid) && <button className="inline-flex min-h-8 max-w-full items-center gap-1 whitespace-nowrap rounded-lg border border-primary/30 bg-primary/5 px-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-60" disabled={busyId === invoice.id} onClick={() => openPaymentDialog(invoice)} type="button">
+                  {(!settlement.isSettled || settlement.isOverpaid) && <button className="inline-flex min-h-11 max-w-full items-center gap-1 whitespace-nowrap rounded-lg border border-primary/30 bg-primary/5 px-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-60 sm:min-h-8" disabled={busyId === invoice.id} onClick={() => openPaymentDialog(invoice)} type="button">
                     <Wallet className="size-3.5 shrink-0" />{settlement.isOverpaid ? "Manage payments" : "Record payment"}
                   </button>}
                 </>}
@@ -487,7 +487,7 @@ export default function InvoiceHistoryPage() {
             {/* When the money actually arrived, taken from the most recent ledger
                 row. A draft has no settlement and an unpaid invoice has no
                 payments, so both show a dash rather than a misleading date. */}
-            <div className="text-sm text-muted-foreground">{invoice.paidOn ? date(invoice.paidOn) : <span className="text-muted-foreground/60">—</span>}</div>
+            <div className="text-sm text-muted-foreground">{invoice.paidOn ? date(invoice.paidOn) : <span className="text-muted-foreground">—</span>}</div>
             <RowActions
               actions={buildInvoiceActions(invoice, settlement, busyId === invoice.id, openPaymentDialog, performAction)}
               label={invoice.invoice_number ?? "draft"}

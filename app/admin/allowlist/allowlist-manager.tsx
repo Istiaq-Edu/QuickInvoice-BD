@@ -138,7 +138,7 @@ export function AllowlistManager({ currentEmail }: { currentEmail: string }) {
     <header className="glass-header">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Administration</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Administration</p>
           <h1 className="mt-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Allowlist and account lifecycle</h1>
         </div>
         <Link className={`${buttonVariants({ variant: "outline", size: "sm" })} shrink-0`} href="/invoices">Back to workspace</Link>

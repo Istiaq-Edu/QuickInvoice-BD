@@ -2,17 +2,25 @@
 
 import Image from "next/image"
 import Link from "next/link"
+import dynamic from "next/dynamic"
 
 import { FormEvent, useEffect, useState } from "react"
 import { Building2, CheckCircle2, LockKeyhole, Upload } from "lucide-react"
 
 import { WorkspaceHeader } from "@/components/workspace-header"
 import { WorkspacePageHeader } from "@/components/workspace-page-header"
-import { LogoCropper, type CroppedLogo } from "@/components/logo-cropper"
+import type { CroppedLogo } from "@/components/logo-cropper"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { MAX_UPLOAD_BYTES } from "@/lib/image/crop"
 import { clearCachedLogoUrl, resolveLogoImageUrl } from "@/lib/image/logo-url-cache"
+
+// Loaded only when a seller actually picks a logo file; see the same note in
+// app/page.tsx. Keeps the canvas editor out of this route's first-load bundle.
+const LogoCropper = dynamic(() => import("@/components/logo-cropper").then((mod) => mod.LogoCropper), {
+  ssr: false,
+  loading: () => <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4"><div className="rounded-2xl border border-border bg-background px-5 py-4 text-sm text-muted-foreground">Loading editor…</div></div>,
+})
 
 type SellerLogo = {
   id: string
@@ -154,7 +162,7 @@ export default function AccountSettingsPage() {
       {loading && <div className="surface p-8 text-sm text-muted-foreground">Loading seller profile…</div>}
       {!loading && requiresAuthentication && <div className="surface flex min-h-80 flex-col items-center justify-center px-6 py-12 text-center"><span className="flex size-12 items-center justify-center rounded-2xl border border-border bg-muted text-primary"><LockKeyhole size={21} /></span><h2 className="mt-5 font-heading text-2xl font-medium">Your seller profile is private</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Sign in to save your business details once, keep your logo secure, and reuse both on future invoices.</p><Link className={`${buttonVariants()} mt-6`} href="/auth/login">Sign in to continue</Link></div>}
       {!loading && !requiresAuthentication && <form onSubmit={save}>
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)] xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
           <section className="surface p-5 sm:p-7">
             <div className="mb-6 flex items-center gap-3 border-b border-border pb-5"><span className="flex size-10 items-center justify-center rounded-xl border border-border bg-muted/80 text-primary"><Building2 size={18} /></span><div><h2 className="font-semibold">Business details</h2><p className="mt-1 text-sm text-muted-foreground">Used as the sender identity on new documents.</p></div></div>
             <div className="grid gap-5 sm:grid-cols-2">
@@ -169,7 +177,7 @@ export default function AccountSettingsPage() {
 
           <aside className="surface p-5 sm:p-6">
             <div className="mb-5 flex items-center gap-3 border-b border-border pb-5"><span className="flex size-10 items-center justify-center rounded-xl border border-border bg-muted/80 text-primary"><Upload size={18} /></span><div><h2 className="font-semibold">Brand mark</h2><p className="mt-1 text-sm text-muted-foreground">Private and used on new invoices.</p></div></div>
-            <div className="flex size-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/45">{logo?.url ? <Image src={logo.url} alt="Current seller logo" width={logo.width ?? 128} height={logo.height ?? 128} unoptimized className="max-h-full max-w-full object-contain" /> : <span className="px-3 text-center text-xs text-muted-foreground">No logo uploaded</span>}</div>
+            <div className="flex size-32 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/45">{logo?.url ? <Image src={logo.url} alt="Current seller logo" width={logo.width ?? 128} height={logo.height ?? 128} sizes="128px" unoptimized className="max-h-full max-w-full object-contain" /> : <span className="px-3 text-center text-xs text-muted-foreground">No logo uploaded</span>}</div>
             <p className="mt-4 text-xs leading-5 text-muted-foreground">PNG, JPEG, or WebP up to 2 MB. You can crop and zoom to frame the logo before it is uploaded.</p>
             <input className="mt-5 block w-full text-sm text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingLogo} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; chooseLogo(chosen) }} />
             <div className="mt-3 flex flex-wrap gap-2">{logo && <Button variant="ghost" size="sm" type="button" disabled={uploadingLogo} onClick={() => void removeLogo}>{uploadingLogo ? "Working…" : "Remove logo"}</Button>}</div>

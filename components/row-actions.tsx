@@ -17,12 +17,16 @@ export type RowAction = {
   target?: string
 }
 
+// Touch targets: 40px is tight on a phone, so these grow to 44px (the WCAG 2.5.5
+// / Apple HIG minimum) below `sm`, then settle back to the compact 40px on a
+// pointer device where the mouse is the input. The menu items get the same
+// treatment: `py-2` is ~36px, raised to a 44px row on touch.
 const triggerClass =
-  "inline-flex min-h-10 items-center gap-1 rounded-lg border border-transparent px-2 text-xs font-semibold text-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground"
+  "inline-flex min-h-11 items-center gap-1 rounded-lg border border-transparent px-2 text-xs font-semibold text-foreground/80 transition-colors hover:bg-muted/60 hover:text-foreground sm:min-h-10"
 const primaryClass =
-  "inline-flex min-h-10 items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+  "inline-flex min-h-11 items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 sm:min-h-10"
 const itemClass =
-  "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm text-foreground/80 outline-none transition-colors data-highlighted:bg-muted data-highlighted:text-foreground"
+  "flex w-full items-center gap-2 rounded-md px-2.5 py-3 text-left text-sm text-foreground/80 outline-none transition-colors data-highlighted:bg-muted data-highlighted:text-foreground sm:py-2"
 
 /**
  * A row's actions, kept to at most two visible buttons.

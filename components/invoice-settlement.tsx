@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { AlertTriangle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useDialogFocus } from "@/components/use-dialog-focus"
 import { calculateSettlement, describePaymentAmount, formatMoney, paymentMethodLabels, settlementDisplay, type PaymentMethod } from "@/lib/invoice/types"
 // Re-exported so the many existing `from "@/components/invoice-settlement"` call
 // sites keep working while the implementation lives in one shared module.
@@ -134,30 +135,12 @@ export function RecordPaymentDialog(props: PaymentDialogProps) {
     onCloseRef.current = props.onClose
   }, [props.onClose])
 
+  // Escape, Tab-trap and focus restore, shared with the confirm dialog. Focus
+  // goes back to the control that opened this panel when it closes.
+  useDialogFocus(dialogRef, true, () => onCloseRef.current())
+
   useEffect(() => {
     amountRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        onCloseRef.current()
-        return
-      }
-      if (event.key !== "Tab") return
-      // Minimal focus trap: without it, Tab walks into the inert page behind.
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href]")
-      if (!focusable || focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener("keydown", onKeyDown)
-    return () => document.removeEventListener("keydown", onKeyDown)
   }, [])
 
   return <div aria-labelledby="record-payment-title" aria-modal="true" className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 p-4 sm:items-center" role="dialog">

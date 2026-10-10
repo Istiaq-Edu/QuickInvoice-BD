@@ -47,3 +47,10 @@ next-env.d.ts
 /shots/
 /debug-out/
 Thumbs.db
+
+# Windows/wizard scratch dumps (msinfo32, MSI logs) accidentally left in the repo root
+/_msi*.txt
+/_msinfo*.txt
+
+# WorkBuddy agent workspace state (project memory, caches) — never committed
+/.workbuddy-ai/

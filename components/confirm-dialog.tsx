@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { AlertTriangle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "cn"
+import { useDialogFocus } from "@/components/use-dialog-focus"
 
 type ConfirmDialogProps = {
   /** Extra context under the description, e.g. which invoice is affected. */
@@ -37,34 +38,16 @@ export function ConfirmDialog({ body, busy, cancelLabel = "Cancel", confirmLabel
     onCancelRef.current = onCancel
   }, [onCancel])
 
+  // Escape, Tab-trap and focus restore. Restoring focus to the trigger on close
+  // was the missing half; see the hook for why it matters.
+  useDialogFocus(panelRef, open, () => onCancelRef.current())
+
   useEffect(() => {
     if (!open) return
     // A destructive prompt opens focused on Cancel, so Enter cannot destroy
     // something with a stray keystroke.
     if (destructive) cancelRef.current?.focus()
     else confirmRef.current?.focus()
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        onCancelRef.current()
-        return
-      }
-      if (event.key !== "Tab") return
-      const focusable = panelRef.current?.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href]")
-      if (!focusable || focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener("keydown", onKeyDown)
-    return () => document.removeEventListener("keydown", onKeyDown)
   }, [open, destructive])
 
   // While the confirm is in flight, Tab and Escape must not leave the dialog.
