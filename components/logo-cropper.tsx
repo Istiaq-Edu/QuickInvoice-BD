@@ -302,7 +302,16 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
           the crop overlay its backdrop-filter was invalidated by every drag
           frame, which re-filtered the viewport and made dragging feel laggy. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-foreground/45 backdrop-blur-sm" />
-      <div className="relative flex max-h-[94vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl">
+      {/* `overflow-y-auto`, not `overflow-hidden`.
+          Measured at 320x568: the panel caps at 94vh = 534px while its content
+          needs 598px, so 66px was clipped with no scrollable ancestor anywhere
+          above it. Cancel sat at y=577 and "Use this crop" at y=529-569, both
+          outside a 568px viewport -- the dialog could be neither confirmed nor
+          dismissed. It fits at 390x844, which is why it went unnoticed.
+          The stage is 38vh rather than 46vh so that on a short phone the
+          controls below it mostly fit without scrolling; the scroll is the
+          guarantee, the smaller stage is the comfort. */}
+      <div className="relative flex max-h-[94vh] w-full max-w-2xl flex-col overflow-y-auto overscroll-contain rounded-t-2xl border border-border bg-card shadow-2xl sm:rounded-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <Crop size={18} className="shrink-0 text-primary" />
@@ -325,7 +334,7 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
           <div className="px-5 py-16 text-center text-sm text-muted-foreground">Preparing image…</div>
         ) : (
           <>
-            <div ref={stageRef} className="relative h-[46vh] min-h-56 touch-none overflow-hidden bg-foreground/5 select-none sm:h-[420px]">
+            <div ref={stageRef} className="relative h-[38vh] min-h-48 touch-none overflow-hidden bg-foreground/5 select-none sm:h-[420px]">
               <div className="absolute inset-0 flex items-center justify-center">
                 <div
                   className="relative shrink-0 select-none touch-none"
@@ -416,7 +425,11 @@ export function LogoCropper({ file, onCancel, onConfirm }: LogoCropperProps) {
 
               {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              {/* Sticky so both actions stay reachable without scrolling. At
+                  320x568 the panel still overflows by ~34px even with the
+                  smaller stage, and an action bar that scrolls away is how the
+                  dialog became unconfirmable in the first place. */}
+              <div className="sticky bottom-0 -mx-5 -mb-4 flex flex-col-reverse gap-2 border-t border-border bg-card px-5 pb-4 pt-3 sm:flex-row sm:justify-end">
                 <Button variant="outline" type="button" onClick={onCancel} disabled={saving}>Cancel</Button>
                 <Button type="button" onClick={() => void confirm()} disabled={saving}>
                   <Check data-icon="inline-start" />
