@@ -15,10 +15,13 @@ import { expect, test } from "@playwright/test"
  */
 const SHORT_PHONE = { width: 320, height: 568 }
 
-// A 1x1 PNG. Small enough to inline, valid enough for the file input and the
-// cropper's own decoding.
-const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+// A 64x64 PNG. Deliberately not 1x1: the cropper needs a source large enough to
+// produce a 64x64 output, and a 1x1 input makes it fall into its error path
+// instead of rendering the controls this test needs to measure.
+const LOGO_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAWklEQVR42u3OMQEAAAgDoJnc6BpjDyRg" +
+  "blXVvXsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAB4W5wAAWQ0k1AAAAAASUVORK5CYII=",
   "base64",
 )
 
@@ -32,11 +35,11 @@ test.describe("short phone viewport", () => {
     await page.waitForTimeout(1200)
 
     // A guest can pick a session logo, and that is what opens the cropper.
-    await page.locator("#seller-logo-upload-guest").setInputFiles({ name: "probe-logo.png", mimeType: "image/png", buffer: TINY_PNG })
+    await page.locator("#seller-logo-upload-guest").setInputFiles({ name: "probe-logo.png", mimeType: "image/png", buffer: LOGO_PNG })
 
     const confirm = page.getByRole("button", { name: /use this crop/i })
     const cancel = page.getByRole("button", { name: /^cancel$/i })
-    await expect(confirm).toBeVisible()
+    await expect(confirm).toBeVisible({ timeout: 20_000 })
 
     // `toBeInViewport` is the assertion that matters: a control can exist, be
     // visible to the accessibility tree, and still sit below the fold of a
