@@ -20,7 +20,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
  * which is a horizontal scroll on every phone. The default is now `auto`, and
  * only the dropdown opts into `w-full`.
  */
-export function SignOutButton({ className, compact = false }: { className?: string; compact?: boolean } = {}) {
+export function SignOutButton({ className }: { className?: string } = {}) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
 
@@ -36,10 +36,9 @@ export function SignOutButton({ className, compact = false }: { className?: stri
     router.refresh()
   }
 
-  // `compact` drops the visible label below `sm` and leaves it for assistive
-  // tech. The invoice page header shows this button at every width, and at 320px
-  // the logo plus three labelled controls need 452px in a 288px box, so the
-  // labels are what has to give. The dropdown and the desktop nav keep the label:
-  // there is room, and a lone icon in a menu reads worse than a word.
-  return <Button className={cn("min-h-10 justify-start", className)} variant="ghost" size="sm" type="button" disabled={loading} onClick={() => void signOut}><LogOut data-icon="inline-start" /><span className={compact ? "sr-only sm:not-sr-only" : undefined}>{loading ? "Signing out…" : "Sign out"}</span></Button>
+  // The label is always rendered. An earlier version dropped it below `sm` and
+  // left an icon-only button in the invoice header; the header now collapses its
+  // account controls into a menu at that width instead, so the label has room
+  // again and a lone icon is no longer needed.
+  return <Button className={cn("min-h-10 justify-start", className)} variant="ghost" size="sm" type="button" disabled={loading} onClick={() => void signOut}><LogOut data-icon="inline-start" />{loading ? "Signing out…" : "Sign out"}</Button>
 }

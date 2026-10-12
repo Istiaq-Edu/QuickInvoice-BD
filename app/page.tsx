@@ -6,7 +6,7 @@ import dynamic from "next/dynamic"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "cn"
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FileDown, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FileDown, Menu, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
 import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 
@@ -1498,7 +1498,7 @@ export default function Home() {
       <header className="glass-header sticky top-0 z-40">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8">
           <BrandLogo />
-          {!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <div className="flex items-center gap-1.5 sm:gap-2">{isAdmin && <Link className={cn(buttonVariants({ variant: "outline", size: "sm" }), "hidden sm:inline-flex")} href="/admin/allowlist"><ShieldCheck data-icon="inline-start" />Admin</Link>}<Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices"><UserRound data-icon="inline-start" /><span className="sr-only sm:not-sr-only">View history</span></Link><SignOutButton compact /></div> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}><UserRound data-icon="inline-start" /><span className="sm:hidden">Sign in</span><span className="hidden sm:inline">Sign in to save</span></Button>}
+          {!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <><div className="hidden items-center gap-2 sm:flex">{isAdmin && <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/admin/allowlist"><ShieldCheck data-icon="inline-start" />Admin</Link>}<Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/invoices"><UserRound data-icon="inline-start" />View history</Link><SignOutButton /></div><details className="relative sm:hidden"><summary aria-label="Account menu" className={`${buttonVariants({ variant: "outline", size: "sm" })} min-h-10 cursor-pointer list-none [&::-webkit-details-marker]:hidden`}><Menu aria-hidden="true" /></summary><div className="absolute right-0 z-50 mt-2 flex min-w-56 flex-col gap-1 rounded-xl border border-border bg-popover p-2 shadow-2xl shadow-stone-950/20 animate-in fade-in-0 slide-in-from-top-2 duration-200"><Link className={`${buttonVariants({ variant: "ghost" })} min-h-10 justify-start`} href="/invoices"><UserRound data-icon="inline-start" />View history</Link>{isAdmin && <Link className={`${buttonVariants({ variant: "ghost" })} min-h-10 justify-start`} href="/admin/allowlist"><ShieldCheck data-icon="inline-start" />Admin</Link>}<div className="my-1 h-px bg-border" /><SignOutButton className="w-full" /></div></details></> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}><UserRound data-icon="inline-start" /><span className="sm:hidden">Sign in</span><span className="hidden sm:inline">Sign in to save</span></Button>}
         </div>
       </header>
 

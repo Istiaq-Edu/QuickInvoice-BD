@@ -142,10 +142,13 @@ async function seedSession(context: BrowserContext) {
  */
 async function expectSignedIn(page: Page, route: string) {
   if (route === "/") {
-    await expect(
-      page.getByRole("button", { name: /sign out/i }).first(),
-      "session was not established -- the layout below would be the guest layout",
-    ).toBeAttached()
+    // Not the sign-out button: below `sm` the header collapses its account
+    // controls into a `<details>` menu, and a closed `<details>` keeps its
+    // contents out of the accessibility tree, so that locator only resolves at
+    // the wider end of the range. The session indicator is rendered at every
+    // width and states the state in words.
+    await expect(page.getByText(/guest mode/i), "session was not established -- the page is showing guest mode").toHaveCount(0)
+    await expect(page.getByText(/signed in/i).first(), "session was not established -- no session indicator").toBeVisible()
     return
   }
   await expect(

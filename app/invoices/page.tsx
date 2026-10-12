@@ -394,9 +394,15 @@ export default function InvoiceHistoryPage() {
         {/* One row of controls instead of a heading plus a labelled grid. The seller
             opens this page to read the list, and the old layout spent roughly 190px
             of the viewport on four fields before the first invoice appeared. Labels
-            stay in the accessibility tree via sr-only. */}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_150px_160px_180px_auto]">
-          <label className="relative block">
+            stay in the accessibility tree via sr-only.
+
+            Below `lg` the controls sit in two columns rather than stacking. Stacked,
+            four short values plus the toggle filled five full-width rows: measured at
+            270px on a 390px screen, which put the first invoice 52% of the way down
+            the viewport. Two columns bring that to three rows and about 170px. The
+            search box keeps the full width because it holds the longest value. */}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-[minmax(0,1fr)_150px_160px_180px_auto]">
+          <label className="relative col-span-2 block lg:col-span-1">
             <span className="sr-only">Search by invoice number or customer</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
             <input className="field h-9 pl-9 text-sm" placeholder="Invoice number or customer" value={filters.q} onChange={(event) => updateFilter("q", event.target.value)} />
@@ -411,9 +417,9 @@ export default function InvoiceHistoryPage() {
           </label>
           <label className="block">
             <span className="sr-only">Sort by</span>
-            <select aria-label="Sort by" className="field h-9 text-sm" value={filters.sort} onChange={(event) => updateFilter("sort", event.target.value as Filters["sort"])}><option value="newest">Newest issue date</option><option value="oldest">Oldest issue date</option><option value="balance_high">Largest balance first</option><option value="balance_low">Smallest balance first</option><option value="amount_high">Highest amount</option><option value="amount_low">Lowest amount</option><option value="due_soon">Nearest due date</option><option value="due_late">Latest due date</option><option value="number_asc">Invoice number A–Z</option><option value="number_desc">Invoice number Z–A</option><option value="paid_newest">Paid date, newest first</option><option value="paid_oldest">Paid date, oldest first</option></select>
+            <select aria-label="Sort by" className="field h-9 text-sm" value={filters.sort} onChange={(event) => updateFilter("sort", event.target.value as Filters["sort"])}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="balance_high">Largest balance</option><option value="balance_low">Smallest balance</option><option value="amount_high">Highest amount</option><option value="amount_low">Lowest amount</option><option value="due_soon">Nearest due</option><option value="due_late">Latest due</option><option value="number_asc">Number A–Z</option><option value="number_desc">Number Z–A</option><option value="paid_newest">Paid, newest</option><option value="paid_oldest">Paid, oldest</option></select>
           </label>
-          <button aria-expanded={showAdvanced} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground" type="button" onClick={() => setShowAdvanced((current) => !current)}>
+          <button aria-expanded={showAdvanced} className="inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground lg:h-9" type="button" onClick={() => setShowAdvanced((current) => !current)}>
             <SlidersHorizontal size={14} />{showAdvanced ? "Hide" : "More"}{hasAdvancedFilters ? <span className="size-1.5 rounded-full bg-primary" /> : null}
           </button>
         </div>
