@@ -724,7 +724,17 @@ export default function Home() {
   }, [templateSettings.showQuantityColumn, lines, discount, subtotal, total])
 
 
-  const incomplete = !sellerCompanyName.trim() || !sellerName.trim() || !buyerName.trim() || !buyerPhone.trim() || lines.length === 0 || lines.some((line) => !line.description.trim() || line.quantity === "" || Number(line.quantity) < 1 || line.unitPrice === "" || Number(line.unitPrice) < 0 || (line.discountType === "percentage" && Number(line.discountValue) > 100) || (line.discountType === "fixed" && Number(line.discountValue) > Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.unitPrice) || 0)))
+  // Money and counts are whole numbers end to end: the columns are bigint,
+  // formatMoney rounds, and the server schema requires an integer for quantity,
+  // unitPrice and discountValue. A decimal in any of the three therefore cannot
+  // be saved at all -- the draft autosave answers 400 and the only feedback was
+  // "Not saved", with no reason given. The price field actively invited one
+  // (step="any", inputMode="decimal", so a phone shows a decimal keypad).
+  // Detecting it here turns a silent save failure into a stated one.
+  const decimalField = lines.find((line) =>
+    [line.quantity, line.unitPrice, line.discountValue].some((value) => value !== "" && !Number.isInteger(Number(value))),
+  )
+  const incomplete = Boolean(decimalField) || !sellerCompanyName.trim() || !sellerName.trim() || !buyerName.trim() || !buyerPhone.trim() || lines.length === 0 || lines.some((line) => !line.description.trim() || line.quantity === "" || Number(line.quantity) < 1 || line.unitPrice === "" || Number(line.unitPrice) < 0 || (line.discountType === "percentage" && Number(line.discountValue) > 100) || (line.discountType === "fixed" && Number(line.discountValue) > Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.unitPrice) || 0)))
   const billTo = useMemo(
     () => resolveBillToParty({ companyName: buyerCompanyName, name: buyerName }),
     [buyerCompanyName, buyerName],
@@ -813,7 +823,14 @@ export default function Home() {
         } else if (nextRequest.generation === autosaveGeneration.current) {
           autosavePending.current = false
           if (response.status === 409) setSaveState("Conflict detected")
-          else setSaveState("Not saved")
+          else {
+            setSaveState("Not saved")
+            // The header has room for a status word, not a sentence, so the
+            // reason goes to the message area. Without it a rejected save is
+            // indistinguishable from a network blip -- which is how a decimal
+            // price managed to fail silently.
+            if (result?.error) setMessage(`Your draft was not saved: ${result.error}`)
+          }
         }
       } catch {
         if (nextRequest.generation === autosaveGeneration.current) {
@@ -1341,6 +1358,10 @@ export default function Home() {
       setMessage(dueBeforeIssue ? "Move the due date to the issue date or later before finalizing." : "Choose an issue date and a due date before finalizing.")
       return
     }
+    if (decimalField) {
+      setMessage("Quantities, unit prices and discounts must be whole numbers. Remove the decimal point and try again.")
+      return
+    }
     if (incomplete) {
       setMessage("Complete the required seller name, buyer name, buyer phone, and line-item fields before finalizing.")
       return
@@ -1387,6 +1408,10 @@ export default function Home() {
     }
     if (datesInvalid) {
       setMessage(dueBeforeIssue ? "Move the due date to the issue date or later before exporting." : "Choose an issue date and a due date before exporting.")
+      return
+    }
+    if (decimalField) {
+      setMessage("Quantities, unit prices and discounts must be whole numbers. Remove the decimal point and try again.")
       return
     }
     if (incomplete) {
@@ -2045,7 +2070,7 @@ function LineCard({ line, index, isLast, onChange, onRemove, onAdvance, onSave, 
       {/* Unit price */}
       <div className="row-start-2 col-start-3 min-w-0 lg:row-start-1 lg:col-start-4">
         <label className="mb-0.5 block text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground lg:sr-only" htmlFor={`price-${line.id}`}>Unit price<span className="sr-only"> for item {index + 1}, in taka</span></label>
-        <input id={`price-${line.id}`} aria-describedby={isLast ? `${describedBy}-next` : undefined} autoComplete="off" className={`ledger-field text-[0.9375rem] font-mono tnum ${numericInset}`} inputMode="decimal" min={0} placeholder="0" step="any" type="number" value={line.unitPrice} onChange={(event) => onChange(line.id, { unitPrice: event.target.value === "" ? "" : Math.max(0, Number(event.target.value)) })} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onAdvance(index, "price") } }} />
+        <input id={`price-${line.id}`} aria-describedby={isLast ? `${describedBy}-next` : undefined} autoComplete="off" className={`ledger-field text-[0.9375rem] font-mono tnum ${numericInset}`} inputMode="numeric" min={0} placeholder="0" step={1} type="number" value={line.unitPrice} onChange={(event) => onChange(line.id, { unitPrice: event.target.value === "" ? "" : Math.max(0, Number(event.target.value)) })} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onAdvance(index, "price") } }} />
         {isLast && <span className="sr-only" id={`${describedBy}-next`}>Press Enter to add another item.</span>}
       </div>
 

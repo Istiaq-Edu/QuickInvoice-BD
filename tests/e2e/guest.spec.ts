@@ -538,4 +538,48 @@ test.describe("guest invoice generator", () => {
     ])
     expect(docxDownload.suggestedFilename()).toBe("invoice-draft.docx")
   })
+
+  test("refuses a decimal figure instead of failing to save it silently", async ({ page }) => {
+    // Money and counts are integers end to end: the columns are bigint,
+    // formatMoney rounds, and the server schema requires an int for quantity,
+    // unitPrice and discountValue. A decimal price therefore cannot be saved at
+    // all, and the failure used to be invisible -- the draft autosave answered
+    // 400 and the UI said only "Not saved", with no reason. The price field made
+    // it worse by inviting a decimal: step="any" and inputMode="decimal", so a
+    // phone presented a decimal keypad. This pins the stated refusal, and that
+    // the field keeps what was typed rather than silently rounding it.
+    await page.goto("/")
+    await page.waitForLoadState("networkidle")
+
+    await openStep(page, "From")
+    await page.locator("#seller-company-name").fill("Seller Co")
+    await page.locator("#seller-name").fill("Seller")
+
+    await openStep(page, "Bill to")
+    await page.locator("#buyer-name").fill("Buyer")
+    await page.locator("#buyer-phone").fill("01800000000")
+
+    await openStep(page, "Items")
+    await page.locator('input[id^="description-"]:visible').first().fill("Consulting")
+    await page.locator('input[id^="quantity-"]:visible').first().fill("1")
+    await page.locator('input[id^="price-"]:visible').first().fill("10.5")
+
+    await openStep(page, "Preview")
+    await expect(page.locator("#price-1")).toHaveValue("10.5")
+
+    await previewPanel(page).getByRole("button", { name: "Download PDF" }).click()
+    // Scoped to the preview panel: the same refusal is also surfaced as a page
+    // notice, so an unscoped locator matches two elements.
+    await expect(previewPanel(page).getByText(/must be whole numbers/i)).toBeVisible()
+
+    // Correcting the figure clears the refusal and the export proceeds.
+    await openStep(page, "Items")
+    await page.locator('input[id^="price-"]:visible').first().fill("11")
+    await openStep(page, "Preview")
+    const [download] = await Promise.all([
+      page.waitForEvent("download", { timeout: 30_000 }),
+      previewPanel(page).getByRole("button", { name: "Download PDF" }).click(),
+    ])
+    expect(download.suggestedFilename()).toBe("invoice-draft.pdf")
+  })
 })
