@@ -53,7 +53,7 @@ export function WorkspaceHeader({
           {links.map((link) => <Link className={`${buttonVariants({ variant: "ghost" })} min-h-10 justify-start`} href={link.href} key={link.href}>{link.icon}{link.label}</Link>)}
           <div className="my-1 h-px bg-border" />
           <Link className={`${buttonVariants()} min-h-10 justify-start`} href="/"><Plus data-icon="inline-start" />New invoice</Link>
-          <SignOutButton />
+          <SignOutButton className="w-full" />
         </div>
       </details>
     </div>
