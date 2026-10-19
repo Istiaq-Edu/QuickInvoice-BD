@@ -686,6 +686,39 @@ export default function Home() {
         next[keys[offender]] = Math.ceil(preceding + boundary - natural[offender])
       }
 
+      // Keep the totals on the same page as the notes.
+      //
+      // The notes are pinned to the bottom of the LAST page with `mt-auto`, and
+      // the totals flow after the line items. On a document that ends just short
+      // of a page boundary, the totals fit on page one but the notes do not, so
+      // the notes alone are pushed to page two — the closing block is split and
+      // the totals look stranded at the foot of a page with nothing under them.
+      // The totals move to the page the notes landed on instead, so "subtotal /
+      // total / notes" is never divided.
+      //
+      // The target is the PAGE BOUNDARY. Anchoring the totals just above the
+      // notes was tried twice and is a feedback loop: the notes are pinned to the
+      // flow's foot, so moving the totals down pushes them down, the flow grows,
+      // the notes land on a later page, and the totals chase them — 96 pages in
+      // the gate fixture. The boundary is a fixed point; the notes' position is
+      // not.
+      const totalsIndex = keys.indexOf("totals")
+      const notesBlock = content.querySelector<HTMLElement>("[data-notes-block]")
+      if (totalsIndex >= 0 && notesBlock) {
+        let totalsShift = 0
+        for (let index = 0; index <= totalsIndex; index += 1) totalsShift += next[keys[index]]
+        const totalsTop = natural[totalsIndex] + totalsShift
+        const notesBox = notesBlock.getBoundingClientRect()
+        const notesTop = (notesBox.top - contentRect.top) / scale
+        const totalsPage = Math.floor(totalsTop / page)
+        const notesPage = Math.floor(notesTop / page)
+        if (notesPage > totalsPage) {
+          let before = 0
+          for (let index = 0; index < totalsIndex; index += 1) before += next[keys[index]]
+          next.totals = Math.max(0, Math.ceil(before + notesPage * page - natural[totalsIndex]))
+        }
+      }
+
       setKeepSpacers((current) => {
         const existing = Object.keys(current)
         if (existing.length === Object.keys(next).length && existing.every((k) => current[k] === next[k])) return current
@@ -1653,7 +1686,7 @@ export default function Home() {
                             </div>
                           </div>}
 <div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto w-full max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
-  <div className="mt-auto pb-1 pt-6 text-[10.5px] leading-[1.6] text-slate-500">
+  <div data-notes-block className="mt-auto pb-1 pt-6 text-[10.5px] leading-[1.6] text-slate-500">
     <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Notes</p>
     {/* One keep-key PER LINE, not one for the block. A note can run to 10,000
         characters, and keeping that whole would either waste a page or — if it

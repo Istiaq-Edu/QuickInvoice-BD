@@ -68,6 +68,12 @@ for (let index = 1; index <= HUGE; index += 1) {
 }
 await page.waitForTimeout(1400)
 
+// A note, so the closing block (totals + notes) is part of the fixture. The
+// totals and the notes are one section: if the notes are pushed to a page the
+// totals are not on, the section is divided and the totals read as stranded.
+await page.locator("textarea").last().fill("Payment due within 7 days of the issue date.")
+await page.waitForTimeout(900)
+
 await page.evaluate(() => {
   const sheet = document.querySelector(".invoice-paper")
   if (sheet) window.scrollTo({ top: window.scrollY + sheet.getBoundingClientRect().top - 20, behavior: "instant" })
@@ -188,6 +194,25 @@ const metrics = await page.evaluate(() => {
   // `overflow: hidden` with a max-height backstop, so a too-tall band does not
   // change the page geometry at all — it silently deletes the last line of the
   // buyer's address, in the preview and in both exports.
+  // The closing block. Both must sit on the same page: the totals flow after
+  // the items, the notes are pinned to the foot of the last page, and the effect
+  // moves the totals onto the notes' page when they would otherwise be split.
+  const totals = sheet.querySelector('[data-keep-key="totals"]')
+  const notesBlock = sheet.querySelector("[data-notes-block]")
+  const closingScale = sheet.getBoundingClientRect().width / 432
+  const pageTop = sheet.getBoundingClientRect().top
+  const pageIndexOf = (el) => el
+    ? Math.floor((el.getBoundingClientRect().top - pageTop) / closingScale / 630.5)
+    : -1
+  const totalsBox = totals?.getBoundingClientRect()
+  const totalsTop = totalsBox ? (totalsBox.top - pageTop) / closingScale : 0
+  const totalsBottom = totalsBox ? (totalsBox.bottom - pageTop) / closingScale : 0
+  const totalsCrosses = []
+  for (let edge = 630.5; edge < totalsBottom; edge += 630.5) {
+    if (totalsTop < edge - 0.5 && totalsBottom > edge + 0.5) totalsCrosses.push(edge)
+  }
+  const totalsPage = pageIndexOf(totals)
+  const notesPage = pageIndexOf(notesBlock)
   const band = sheet.querySelector("[data-identity-band]")
   const bandBox = band?.getBoundingClientRect()
   const bandHeightPx = band ? Math.round(bandBox.height) : 0
@@ -221,6 +246,9 @@ const metrics = await page.evaluate(() => {
     marginPx,
     bandHeightPx,
     bandClipPx,
+    totalsCrosses,
+    totalsPage,
+    notesPage,
     bandSideClipPx,
     bandBottomFraction: Math.round(bandBottomFraction * 1000) / 1000,
     misaligned,
@@ -333,6 +361,8 @@ if (metrics.bandClipPx > 0) failures.push(`identity band is clipped by ${metrics
 if (metrics.bandSideClipPx > 0) failures.push(`identity band overflows sideways by ${metrics.bandSideClipPx}px; the invoice number or dates are cut off`)
 if (metrics.bandBottomFraction > 0.25) failures.push(`identity band ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one; the budget is 25%`)
 if (metrics.bandHeightPx <= 0) failures.push("identity band not found; the quarter-of-a-page check would pass by measuring nothing")
+if (metrics.totalsCrosses.length) failures.push(`subtotal/total block is split across a page boundary at ${metrics.totalsCrosses.join(", ")}px`)
+if (metrics.notesPage >= 0 && metrics.totalsPage !== metrics.notesPage) failures.push(`closing block is divided: totals on page ${metrics.totalsPage + 1}, notes on page ${metrics.notesPage + 1}`)
 // The column set is document-wide: a header that disagrees with its rows prints
 // its labels over the wrong figures and no per-grid audit can see it.
 if (metrics.flagSets.length !== 1 || metrics.flagSets[0] !== "true/true") failures.push(`line grids disagree on which columns print: ${JSON.stringify(metrics.flagSets)}`)
