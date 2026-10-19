@@ -518,6 +518,32 @@
     var(--inv-col-amount, 4.25rem);
 }
 
+/* The discount track is only declared while the column is printed.
+ *
+ * The column is conditional now — it appears when a line carries a discount and
+ * disappears when none does — so the template has four states rather than two.
+ * They are written out rather than composed from a variable, because the whole
+ * point of this rule set is that every row resolves to the SAME track list, and
+ * a state that falls through to a half-applied combination would put Amount in
+ * the discount track on some rows only. The two single-flag rules tie on
+ * specificity, which is safe: they describe mutually exclusive attribute states.
+ * The combined rule outranks both.
+ */
+.invoice-line-grid[data-discount="false"] {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--inv-col-qty, 2.5rem)
+    var(--inv-col-price, 3.75rem)
+    var(--inv-col-amount, 4.25rem);
+}
+
+.invoice-line-grid[data-qty="false"][data-discount="false"] {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--inv-col-price, 3.75rem)
+    var(--inv-col-amount, 4.25rem);
+}
+
 @container (max-width: 26rem) {
   .invoice-paper .invoice-line-grid {
     gap-x: 0.25rem;

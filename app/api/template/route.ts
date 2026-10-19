@@ -51,10 +51,24 @@ export async function PUT(request: Request) {
   const workspaceId = await getWorkspaceId(supabase, authData.user.id)
   if (!workspaceId) return NextResponse.json({ error: "Your workspace could not be found." }, { status: 403 })
 
-  const parsed = templateSchema.safeParse(await request.json().catch(() => null))
+  // PUT accepts a PARTIAL settings object and merges it into what is stored.
+  //
+  // It used to require the whole object, which forced every caller to hold a
+  // complete copy before it could change one switch. Any caller holding a stale
+  // copy — a page that had not loaded the template yet, or a saved draft carrying
+  // its own snapshot of the settings — then wrote that copy back over the
+  // workspace and silently reverted everything it did not know about. Merging on
+  // the server means a caller only ever states what it means to change.
+  //
+  // A full object still validates and behaves exactly as before, so the Customize
+  // panel's save is unchanged.
+  const parsed = templateSchema.partial().safeParse(await request.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: "Template settings are invalid." }, { status: 400 })
-  const settings = { schemaVersion: 2, ...parsed.data }
+  const { data: existing } = await supabase.from("templates").select("settings").eq("workspace_id", workspaceId).single()
+  const stored = templateSchema.safeParse(existing?.settings)
+  const merged = { ...(stored.success ? stored.data : defaultTemplateSettings), ...parsed.data }
+  const settings = { schemaVersion: 2, ...merged }
   const { error } = await supabase.from("templates").upsert({ workspace_id: workspaceId, schema_version: 2, settings, updated_at: new Date().toISOString() }, { onConflict: "workspace_id" })
   if (error) return NextResponse.json({ error: "Template settings could not be saved." }, { status: 500 })
-  return NextResponse.json({ success: true, settings: parsed.data })
+  return NextResponse.json({ success: true, settings: merged })
 }

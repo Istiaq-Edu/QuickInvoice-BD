@@ -6,7 +6,7 @@ import dynamic from "next/dynamic"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "cn"
-import { ChevronDown, ChevronLeft, ChevronRight, FileDown, Menu, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, Menu, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
 import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 
@@ -51,6 +51,12 @@ type EditableNumber = number | ""
 
 const defaultTemplateSettings: TemplateSettings = { accent: "slate", showAddresses: true, showSellerContact: true, showBuyerContact: true, showNotes: true, showQuantityColumn: true, showPaidStamp: true }
 const mobileSteps = ["Details", "From", "Bill to", "Items", "Notes", "Preview"]
+// Motion is a preference, and `scrollIntoView` takes it as a JS option that CSS
+// cannot reach: the stylesheet's `prefers-reduced-motion` block covers scrolling
+// it initiates, not scrolling the page initiates from here. Both cross-references
+// ask for themselves.
+const scrollBehavior = (): ScrollBehavior =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
 
 // One column template for the ledger header and every row, so the two cannot
 // drift apart: `#` | description | qty | unit price | amount | row actions.
@@ -206,6 +212,10 @@ export default function Home() {
   const [templateLoaded, setTemplateLoaded] = useState(false)
   const [templateOpen, setTemplateOpen] = useState(false)
   const [templateSaving, setTemplateSaving] = useState(false)
+  // A failed write of the printed-column setting. It lives beside the other
+  // template state rather than next to the switch because the sign-out handler
+  // clears it, and that handler is defined above the toolbar.
+  const [columnSaveError, setColumnSaveError] = useState("")
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [logoAssetId, setLogoAssetId] = useState<string | null>(null)
   const [sessionLogo, setSessionLogo] = useState<SessionLogo | null>(null)
@@ -342,6 +352,9 @@ export default function Home() {
       if (!user) {
         setLogoAssetId(null)
         setPendingCrop(null)
+        // A template error belongs to the account that produced it, so it does
+        // not follow the next session in.
+        setColumnSaveError("")
         // The signed URL is a short-lived capability, so it does not outlive the
         // session that was allowed to use it.
         clearCachedLogoUrl()
@@ -530,6 +543,22 @@ export default function Home() {
   // html2canvas parses the keyword but does not implement subgrid layout, so the
   // preview would be right and every exported PDF silently wrong.
   const previewLineGridQty = templateSettings.showQuantityColumn ? "true" : "false"
+  // The discount column is derived, not configured.
+  //
+  // It used to print on every invoice and hold a dash on every row that had no
+  // discount, so a document with no discounts at all still carried a column of
+  // "—" between Price and Amount — a table asking the reader to look at data that
+  // is not there. The column now exists only while at least one line actually
+  // takes money off, which is also the only case where the arithmetic needs
+  // showing. It is measured from the computed amounts rather than from
+  // `discountType`, because a line set to "Percent" with a value of 0 is not a
+  // discount and must not summon the column.
+  //
+  // The per-row cell is still rendered when the column exists but that row has no
+  // discount: a grid row is its own grid, so a missing cell would pull Amount
+  // left into the discount track.
+  const previewDiscountColumn = lineAmounts.some((line) => line.discountAmount > 0)
+  const previewLineGridDiscount = previewDiscountColumn ? "true" : "false"
   // The preview is laid out once, at the canonical A4 width, and each page sheet is
   // a window onto that same flow shifted up by whole content-box heights. That is
   // the print-layout pattern — the one Google Docs, Word and every PDF viewer use —
@@ -667,7 +696,12 @@ export default function Home() {
     observer.observe(content)
     measure()
     return () => observer.disconnect()
-  }, [paperGeometry.pageHeightPx, keepSpacers])
+  // The two column flags are dependencies as well as the page height: a toggle
+  // changes every row's height at once, and relying on the ResizeObserver alone
+  // means the spacers are solved a frame late — for that frame a row sits
+  // straddling a boundary that the next pass then moves, which is visible as the
+  // page count flickering.
+  }, [paperGeometry.pageHeightPx, keepSpacers, previewDiscountColumn, templateSettings.showQuantityColumn])
 
   // Measure the widest figure in each money column and publish it as a custom
   // property, so every row lays out on the same tracks.
@@ -686,13 +720,21 @@ export default function Home() {
     const flow = previewRef.current
     if (!flow) return
     const showQty = templateSettings.showQuantityColumn
+    // The discount track only exists while the column does, so the cell indexes
+    // have to be built from the same two flags that build the rows. Hard-coding
+    // the five-cell order is what would make the Amount column measured against
+    // the Discount track the moment either column is dropped.
+    const showDiscount = previewDiscountColumn
 
     const measure = () => {
       const rows = Array.from(flow.querySelectorAll<HTMLElement>(".invoice-line-grid"))
       // Cell index of each money column, matching the order the CSS declares.
-      const columns = showQty
-        ? [{ name: "--inv-col-qty", index: 1 }, { name: "--inv-col-price", index: 2 }, { name: "--inv-col-discount", index: 3 }, { name: "--inv-col-amount", index: 4 }]
-        : [{ name: "--inv-col-price", index: 1 }, { name: "--inv-col-discount", index: 2 }, { name: "--inv-col-amount", index: 3 }]
+      const columns: Array<{ name: string; index: number }> = []
+      let cell = 1
+      if (showQty) columns.push({ name: "--inv-col-qty", index: cell++ })
+      columns.push({ name: "--inv-col-price", index: cell++ })
+      if (showDiscount) columns.push({ name: "--inv-col-discount", index: cell++ })
+      columns.push({ name: "--inv-col-amount", index: cell++ })
 
       const widths = new Map(columns.map((c) => [c.name, 0]))
       const range = document.createRange()
@@ -710,11 +752,20 @@ export default function Home() {
       // Every page copy gets the same values. The fallbacks in the CSS stand in
       // until this runs, so the first paint is briefly narrower rather than
       // overflowing into its neighbour.
+      //
+      // A column that is not printed is CLEARED rather than skipped. Leaving the
+      // last measured width on the element kept a value that no longer described
+      // the document — and the exporter clones these inline styles into the page
+      // frame, so the stale number travelled into the PDF. It also meant the
+      // first frame after the discount column came back was laid out at whatever
+      // width the previous invoice happened to need.
+      const absent = ["--inv-col-qty", "--inv-col-price", "--inv-col-discount", "--inv-col-amount"].filter((name) => !columns.some((column) => column.name === name))
       for (const copy of Array.from(document.querySelectorAll<HTMLElement>(".invoice-page-content"))) {
         for (const column of columns) {
           const width = widths.get(column.name) ?? 0
           copy.style.setProperty(column.name, width > 0 ? `${Math.ceil(width + 1)}px` : "")
         }
+        for (const name of absent) copy.style.removeProperty(name)
       }
     }
 
@@ -723,7 +774,7 @@ export default function Home() {
     observer.observe(flow)
     void document.fonts?.ready.then(measure)
     return () => observer.disconnect()
-  }, [templateSettings.showQuantityColumn, lines, discount, subtotal, total])
+  }, [templateSettings.showQuantityColumn, previewDiscountColumn, lines, discount, subtotal, total])
 
 
   // Money and counts are whole numbers end to end: the columns are bigint,
@@ -1341,12 +1392,126 @@ export default function Home() {
       if (!response.ok) throw new Error(result.error ?? "Template settings could not be saved.")
       setTemplateLoaded(true)
       setTemplateOpen(false)
+      // This save wrote the whole template, column setting included, so any error
+      // the column switch reported is now stale.
+      setColumnSaveError("")
       setMessage("Template settings saved for future invoices.")
     } catch (saveError: unknown) {
       setMessage(saveError instanceof Error ? saveError.message : "Template settings could not be saved.")
     } finally {
       setTemplateSaving(false)
     }
+  }
+  // A printed-column switch writes the workspace template, not just this draft.
+  //
+  // The quantity column used to live inside the Customize panel, where "Save
+  // template" was the only thing that wrote the template back. Moving the switch
+  // out without moving the write would have left it changing a value that only
+  // autosaves with the draft and is dropped the next time a new invoice starts —
+  // the switch would look broken one invoice later. So the write happens where
+  // the switch is flipped.
+  //
+  // The body is ONE key. The route merges a partial settings object, so this
+  // cannot carry a stale accent, contact or stamp back over the workspace — which
+  // is what a full-object write would have done here, because this page's
+  // `templateSettings` is the page default until the Customize panel is opened,
+  // and a loaded draft replaces it with that draft's own snapshot.
+  //
+  // Writes are debounced and serialised. Tapping twice quickly used to fire two
+  // requests carrying click-time snapshots, and whichever landed last won, so the
+  // stored template could disagree with the switch on screen. The timer collapses
+  // a double tap; the chain keeps overlapping writes in order and drops one a
+  // newer value has already superseded.
+  const columnSaveTimer = useRef<number | null>(null)
+  const columnSaveChain = useRef<Promise<void>>(Promise.resolve())
+  const columnSaveValue = useRef<boolean | null>(null)
+  useEffect(() => () => {
+    if (columnSaveTimer.current) window.clearTimeout(columnSaveTimer.current)
+  }, [])
+
+  const persistQuantityColumn = (value: boolean) => {
+    columnSaveChain.current = columnSaveChain.current.then(async () => {
+      // A later tap superseded this write while it waited its turn.
+      if (columnSaveValue.current !== value) return
+      try {
+        const response = await fetch("/api/template", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showQuantityColumn: value }) })
+        if (!response.ok) {
+          const result = await response.json() as { error?: string }
+          throw new Error(result.error ?? "The column setting could not be saved for future invoices.")
+        }
+        setColumnSaveError("")
+      } catch (saveError: unknown) {
+        setColumnSaveError(saveError instanceof Error ? saveError.message : "The column setting could not be saved for future invoices.")
+      }
+    })
+  }
+  const setQuantityColumn = (showQuantityColumn: boolean) => {
+    setTemplateSettings((current) => ({ ...current, showQuantityColumn }))
+    if (!accountEmail) return
+    columnSaveValue.current = showQuantityColumn
+    if (columnSaveTimer.current) window.clearTimeout(columnSaveTimer.current)
+    columnSaveTimer.current = window.setTimeout(() => persistQuantityColumn(showQuantityColumn), 400)
+  }
+  // The two cross-references, and why they are not timers.
+  //
+  // Both directions have the same shape: change a step or open a panel, then move
+  // the viewport AND the focus to a node that does not exist yet — the panel is
+  // opened by an async handler, and on a phone the target section is a `hidden`
+  // step until the state commits. An 80ms timer was tried and is wrong twice: it
+  // fires before the panel has mounted when the template has to be fetched, and it
+  // fires before the step has painted on a slow device. Worse, the first version
+  // focused the preview's toggle, which is `disabled` while the template loads, so
+  // for a signed-in seller the focus silently stayed on the link they had clicked.
+  //
+  // So the request is recorded and an effect settles it: it runs again whenever the
+  // panel or the step changes, gives up quietly while the target is still hidden
+  // (`offsetParent === null` is the display:none test), and clears itself once it
+  // has actually focused something. Focus is never asked for twice, and it is never
+  // asked for a node the reader cannot see.
+  const pendingFocus = useRef<{ target: "items" | "display"; at: number } | null>(null)
+  const [focusSignal, setFocusSignal] = useState(0)
+  const requestFocus = (target: "items" | "display") => {
+    pendingFocus.current = { target, at: Date.now() }
+    setFocusSignal((current) => current + 1)
+  }
+  useEffect(() => {
+    const pending = pendingFocus.current
+    if (!pending) return
+    // A request that cannot land within a couple of seconds is dropped rather
+    // than kept. A pending jump that outlives its cause would move the reader's
+    // focus the next time the panel or the step changed for an unrelated reason.
+    if (Date.now() - pending.at > 2000) {
+      pendingFocus.current = null
+      return
+    }
+    const section = document.getElementById(pending.target === "items" ? "line-items" : "invoice-display")
+    if (!section || section.offsetParent === null) return
+    section.scrollIntoView({ behavior: scrollBehavior(), block: "start" })
+    // The switch is what the reader was sent to change; the panel's own heading is
+    // what a reader arriving at the panel needs to hear first.
+    const focusTarget = pending.target === "items"
+      ? section.querySelector<HTMLElement>('button[role="switch"]')
+      : document.getElementById("invoice-display-title")
+    if (!focusTarget) {
+      pendingFocus.current = null
+      return
+    }
+    focusTarget.focus({ preventScroll: true })
+    // Cleared only once the focus actually landed. The switch sits inside a
+    // disabled fieldset while a draft is loading, and `focus()` on a disabled node
+    // does nothing — clearing unconditionally would consume the request and leave
+    // the reader where they started, which is the bug this replaced.
+    if (document.activeElement === focusTarget) pendingFocus.current = null
+  }, [focusSignal, templateOpen, mobileStep, loadingDraft])
+  const goToLineItemColumns = () => {
+    setTemplateOpen(false)
+    if (window.matchMedia("(max-width: 1279px)").matches) setMobileStep(3)
+    requestFocus("items")
+  }
+  const goToTemplateSettings = () => {
+    if (window.matchMedia("(max-width: 1279px)").matches) setMobileStep(5)
+    if (!templateOpen) void openTemplateSettings()
+    requestFocus("display")
   }
   const exportInvoice = async (format: "PDF" | "DOCX") => {
     if (datesInvalid) {
@@ -1481,7 +1646,7 @@ export default function Home() {
                               <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
                             </div>
                           </div>}
-<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span><span className="text-right">Discount</span><span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span><span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span><span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
+<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
   <div className="pt-6 text-[10.5px] leading-[1.6] text-slate-500">
     <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Notes</p>
     {/* One keep-key PER LINE, not one for the block. A note can run to 10,000
@@ -1591,7 +1756,7 @@ export default function Home() {
 
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 2 ? "" : "hidden"} xl:block`}><div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-start"><SectionHeading eyebrow="Bill to" title="Who you are billing" description="Bill a company or a person. Company name is optional." /><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">{!authChecked ? <span className="text-xs text-muted-foreground">Checking session⬦</span> : accountEmail ? <><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void loadCustomers()}>{loadingCustomers ? "Loading⬦" : "Load saved customers"}</Button><Button variant="outline" size="sm" type="button" disabled={loadingCustomers || savingCustomer} onClick={() => void saveCustomer()}>{savingCustomer ? "Saving⬦" : "Save customer"}</Button>{selectedCustomerId && <span className="text-xs text-muted-foreground">updates this saved customer</span>}</> : <Button variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to use saved customers</Button>}<span className="basis-full text-xs text-muted-foreground" role="status">{customerStatus}</span></div></div><div className="mb-5 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-xs"><span className="font-medium uppercase tracking-wide text-muted-foreground">Bill-to heading</span><span aria-live="polite" className={`ml-2 font-semibold ${hasBillToParty ? "text-foreground" : "font-normal text-muted-foreground"}`}>{hasBillToParty ? billTo.heading : "Not set yet"}</span>{headingNote && <span className="mt-1 block text-muted-foreground">{headingNote}</span>}</div><div className="grid gap-5 sm:grid-cols-2"><Field label="Buyer name" htmlFor="buyer-name" required><input autoComplete="name" className="field" id="buyer-name" maxLength={500} placeholder="e.g. Rahim Uddin" required value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field><Field label="Company name" htmlFor="buyer-company-name" optional><input autoComplete="organization" className="field" id="buyer-company-name" maxLength={500} placeholder="e.g. Acme Ltd" value={buyerCompanyName} onChange={(event) => setBuyerCompanyName(event.target.value)} /></Field><Field label="Email" htmlFor="buyer-email" optional><input autoComplete="email" className="field" id="buyer-email" inputMode="email" type="email" placeholder="customer@example.com" value={buyerEmail} onChange={(event) => setBuyerEmail(event.target.value)} /></Field><Field label="Phone" htmlFor="buyer-phone" required><input autoComplete="tel" className="field" id="buyer-phone" inputMode="tel" maxLength={100} placeholder="01XXXXXXXXX" value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} required /></Field><Field label="Address" htmlFor="buyer-address" className="sm:col-span-2" optional><textarea autoComplete="street-address" className="field min-h-24 resize-y" id="buyer-address" maxLength={2000} placeholder="Customer address" value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} /></Field></div></div>
 
-            <div className={`editor-section surface p-6 sm:p-8 ${mobileStep === 3 ? "" : "hidden"} xl:block`}>
+            <div className={`editor-section surface scroll-mt-24 p-6 sm:p-8 ${mobileStep === 3 ? "" : "hidden"} xl:block`} id="line-items">
               <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-start">
                 <SectionHeading
                   description="Add a clear description, quantity, and unit price for each item. Press Enter in the last field to add another."
@@ -1608,6 +1773,63 @@ export default function Home() {
                     : <Button className="h-11 flex-1 sm:h-9 sm:flex-none" variant="outline" size="sm" type="button" onClick={() => router.push("/auth/login")}>Sign in to reuse items</Button>}
                 </div>
               </div>
+
+              {/* Printed columns — the one document customization that belongs to
+                  the ledger. The quantity column used to be a checkbox inside the
+                  preview's Customize panel: a section away from the table it
+                  changes, behind a click, and mixed in with settings about the
+                  seller's identity and the accent colour. A column is a property
+                  of this table, so its switch sits on this table.
+
+                  What stays in the preview panel is genuinely document-wide —
+                  accent, addresses, contacts, notes, the paid stamp — and belongs
+                  beside the paper, where the effect of changing it is visible.
+
+                  The discount column has no switch because it is not a
+                  preference: it prints while a line carries a discount and
+                  disappears when none does, so an invoice without discounts never
+                  carries a column of dashes. It is reported as a status instead of
+                  a control, which also answers "where did my discount column go".
+
+                  No container: a bordered, filled bar here read as a third band
+                  between the section heading and the table header and outweighed
+                  both. The chips carry their own edges, so the row only needs to
+                  sit close to the table it describes — which is also why the gap
+                  below it is smaller than the gap above. */}
+              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground" id="printed-columns-label">
+                  <Columns3 aria-hidden="true" className="shrink-0 text-primary" size={13} />
+                  <span className="text-foreground/80">Printed columns</span>
+                  <span className="truncate">· PDF &amp; DOCX</span>
+                </p>
+                <div aria-labelledby="printed-columns-label" className="flex flex-wrap items-center gap-x-3 gap-y-1.5" role="group">
+                  <ColumnSwitch
+                    checked={templateSettings.showQuantityColumn}
+                    label="Qty"
+                    onChange={setQuantityColumn}
+                  />
+                  {/* A status, not a control, and deliberately without a dot.
+                      A dot in the position a switch's indicator occupies read as
+                      a second, broken switch beside the working one — three
+                      control metaphors in one row. The sentence is the whole
+                      statement now, and the screen-reader half is where the
+                      current outcome lives, because that is the only part that
+                      changes while the seller types and the only part worth
+                      announcing. */}
+                  <span className="text-[11px] font-medium text-muted-foreground" role="status">
+                    <span aria-hidden="true">Discount column: automatic</span>
+                    <span className="sr-only">Discount column prints only when a line has a discount. {previewDiscountColumn ? "It is printing." : "It is hidden."}</span>
+                  </span>
+                </div>
+                {/* The way back to the other half of the split, as a real anchor:
+                    it navigates, so it should be a link — the preview's control of
+                    the same name is a button that opens the panel in place, and the
+                    different roles are what tell the two apart. `preventDefault`
+                    keeps the hash jump from fighting the smooth scroll, and the
+                    handler is what opens the panel and moves focus. */}
+                <a className="inline-flex items-center gap-1 max-sm:ml-auto text-[11px] font-medium text-foreground/70 underline decoration-border decoration-dotted underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/40" href="#invoice-display" onClick={(event) => { event.preventDefault(); goToTemplateSettings() }}>Display options<span className="sr-only"> for the document</span><ChevronRight aria-hidden="true" size={11} /></a>
+              </div>
+              {columnSaveError && <p className="mb-3 text-[11px] leading-4 text-destructive" role="alert">{columnSaveError}</p>}
 
               {/* The item count and the "totals update automatically" reassurance used to
                   occupy a whole row here. The count restates what the cards below
@@ -1681,8 +1903,8 @@ export default function Home() {
 
           <section className={`min-w-0 xl:sticky xl:top-[6.5rem] ${mobileStep === 5 ? "" : "hidden"} xl:block`} aria-label="Invoice preview">
             <div className="surface-raised overflow-hidden p-4 xl:p-5">
-              <div className="mb-5 flex items-center justify-between gap-4 px-1"><div><p className="eyebrow">Live document</p><h2 className="mt-2 font-heading text-2xl font-medium tracking-[-0.02em]">A4 portrait</h2><p className="mt-1 text-xs text-muted-foreground" role="status">{previewPageCount} page{previewPageCount === 1 ? "" : "s"} in the PDF and DOCX</p></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void openTemplateSettings()}><RotateCcw data-icon="inline-start" />{templateOpen ? "Close customize" : "Customize"}</Button></div>
-            {templateOpen && <div className="mb-4 scroll-mb-24 scroll-mt-20 rounded-xl border border-border/80 bg-muted/35 p-4"><div className="mb-4 flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Invoice display</p><p className="mt-1 text-sm font-medium">Choose what appears on the invoice</p></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void saveTemplateSettings}>{templateSaving ? "Saving⬦" : accountEmail ? "Save template" : "Done"}</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-2 block text-xs font-medium text-muted-foreground">Accent color</span><select className="field" value={templateSettings.accent} onChange={(event) => setTemplateSettings((current) => ({ ...current, accent: event.target.value as TemplateSettings["accent"] }))}><option value="slate">Slate</option><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="indigo">Indigo</option></select></label><div className="space-y-2 text-sm text-foreground/80"><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showAddresses} onChange={(event) => setTemplateSettings((current) => ({ ...current, showAddresses: event.target.checked }))} />Show addresses</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showSellerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showSellerContact: event.target.checked }))} />Show seller contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showBuyerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showBuyerContact: event.target.checked }))} />Show customer contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showNotes} onChange={(event) => setTemplateSettings((current) => ({ ...current, showNotes: event.target.checked }))} />Show notes</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showQuantityColumn} onChange={(event) => setTemplateSettings((current) => ({ ...current, showQuantityColumn: event.target.checked }))} />Show quantity column</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showPaidStamp} onChange={(event) => setTemplateSettings((current) => ({ ...current, showPaidStamp: event.target.checked }))} />Stamp paid invoices</label></div></div></div>}
+              <div className="mb-5 flex items-center justify-between gap-4 px-1"><div><p className="eyebrow">Live document</p><h2 className="mt-2 font-heading text-2xl font-medium tracking-[-0.02em]">A4 portrait</h2><p className="mt-1 text-xs text-muted-foreground" role="status">{previewPageCount} page{previewPageCount === 1 ? "" : "s"} in the PDF and DOCX</p></div><Button aria-expanded={templateOpen} id="display-options-toggle" variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void openTemplateSettings()}><RotateCcw data-icon="inline-start" />{templateOpen ? "Close display options" : "Display options"}</Button></div>
+            {templateOpen && <div aria-labelledby="invoice-display-title" className="mb-4 scroll-mb-24 scroll-mt-20 rounded-xl border border-border/80 bg-muted/35 p-4" id="invoice-display" role="region"><div className="mb-4 flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Display options</p><h3 className="mt-1 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40" id="invoice-display-title" tabIndex={-1}>Choose what prints on the paper</h3></div><Button variant="outline" size="sm" type="button" disabled={templateSaving} onClick={() => void saveTemplateSettings}>{templateSaving ? "Saving⬦" : accountEmail ? "Save template" : "Done"}</Button></div><p className="mb-3 mt-2 text-[11px] leading-4 text-muted-foreground">Columns are set in <button className="font-medium text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary" type="button" onClick={goToLineItemColumns}>Line items</button>.</p><div className="grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-2 block text-xs font-medium text-muted-foreground">Accent color</span><select className="field" value={templateSettings.accent} onChange={(event) => setTemplateSettings((current) => ({ ...current, accent: event.target.value as TemplateSettings["accent"] }))}><option value="slate">Slate</option><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="indigo">Indigo</option></select></label><fieldset className="min-w-0 space-y-2 border-0 p-0 text-sm text-foreground/80"><legend className="mb-1 text-xs font-medium text-muted-foreground">Sections to print</legend><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showAddresses} onChange={(event) => setTemplateSettings((current) => ({ ...current, showAddresses: event.target.checked }))} />Show addresses</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showSellerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showSellerContact: event.target.checked }))} />Show seller contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showBuyerContact} onChange={(event) => setTemplateSettings((current) => ({ ...current, showBuyerContact: event.target.checked }))} />Show customer contact</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showNotes} onChange={(event) => setTemplateSettings((current) => ({ ...current, showNotes: event.target.checked }))} />Show notes</label><label className="flex items-center gap-2"><input type="checkbox" checked={templateSettings.showPaidStamp} onChange={(event) => setTemplateSettings((current) => ({ ...current, showPaidStamp: event.target.checked }))} />Stamp paid invoices</label></fieldset></div></div>}
               <div className="rounded-xl border border-stone-300/70 bg-[#e9e5dc] p-3 shadow-inner sm:p-5">
 
                         {/* The scale is applied HERE rather than on the sheet: the page
@@ -1777,7 +1999,7 @@ export default function Home() {
                           </div>
                         )}
             </div>
-              <div className="mt-5 border-t border-border/80 pt-5"><div className="grid gap-3 sm:grid-cols-2"><Button type="button" variant="outline" className="h-11" disabled={exporting} onClick={() => exportInvoice("PDF")}><FileDown data-icon="inline-start" />Download PDF</Button><Button type="button" className="h-11" disabled={exporting} onClick={() => exportInvoice("DOCX")}><FileDown data-icon="inline-start" />Download DOCX</Button></div>{message && <p className="mt-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground" role="status">{message}</p>}<p className="mt-3 text-center text-xs text-muted-foreground">{accountEmail ? "Saved invoices stay in your history, where you can reopen or download them." : "Sign in later to save invoice history across devices."}</p></div>
+              <div className="mt-5 border-t border-border/80 pt-5"><div className="grid gap-3 sm:grid-cols-2"><Button type="button" variant="outline" className="h-11" disabled={exporting} onClick={() => exportInvoice("PDF")}><FileDown data-icon="inline-start" />Download PDF</Button><Button type="button" className="h-11" disabled={exporting} onClick={() => exportInvoice("DOCX")}><FileDown data-icon="inline-start" />Download DOCX</Button></div>{message && <p className="mt-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground">{message}</p>}<p className="mt-3 text-center text-xs text-muted-foreground">{accountEmail ? "Saved invoices stay in your history, where you can reopen or download them." : "Sign in later to save invoice history across devices."}</p></div>
             </div>
 
           </section>
@@ -1906,6 +2128,42 @@ function SectionHeading({ eyebrow, title, description }: { eyebrow: string; titl
   // text-balance on the heading: these titles are short but a two-word tail can
   // still wrap to a lone word at narrow widths.
   return <div className="mb-5"><p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">{eyebrow}</p><h2 className="mt-1 text-balance font-heading text-2xl font-medium tracking-[-0.02em]">{title}</h2><p className="mt-1 text-pretty text-sm leading-5 text-muted-foreground">{description}</p></div>
+}
+
+// A printed-column switch, as a chip rather than a checkbox.
+//
+// This is a toolbar, not a form: the chip names the column and states whether it
+// prints in one target, and the whole chip is the target rather than a 14px box
+// beside a label — which is what a thumb on a phone needs, and what the 32px
+// height here gives it. `role="switch"` carries the on/off announcement without
+// the native checkbox's label plumbing, and the visible text is the accessible
+// name, so voice control still matches what is on screen.
+//
+// The off state borders with `--input`, not `--border`. That token exists for
+// exactly this: an interactive edge has to clear 3:1 against the card to be
+// identifiable without a label (WCAG 1.4.11), where `--border` is for separating
+// data regions and measures 1.4:1 here. An empty circle drawn in `--border` is a
+// switch that looks switched off and invisible at the same time.
+function ColumnSwitch({ label, checked, onChange }: { label: string; checked: boolean; onChange: (next: boolean) => void }) {
+  return <button
+    aria-checked={checked}
+    className={cn(
+      "touch-hit inline-flex h-8 touch-manipulation items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold transition-colors",
+      checked ? "border-primary/45 bg-primary/10 text-primary" : "border-input bg-card text-muted-foreground hover:border-primary/60 hover:text-foreground",
+    )}
+    onClick={() => onChange(!checked)}
+    role="switch"
+    type="button"
+  >
+    <span aria-hidden="true" className={cn("flex size-3.5 shrink-0 items-center justify-center rounded-full border", checked ? "border-primary bg-primary text-primary-foreground" : "border-input")}>
+      {checked && <Check size={9} strokeWidth={3.5} />}
+    </span>
+    {label}
+    {/* "Qty" alone is read out as four letters. The word "column" is what makes
+        it a name, and the visible label stays the front of it, so voice control
+        still matches the screen (WCAG 2.5.3). */}
+    <span className="sr-only"> column</span>
+  </button>
 }
 
 // The discount is always on screen. It used to appear only once a row's menu had

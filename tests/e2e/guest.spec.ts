@@ -332,24 +332,25 @@ test.describe("guest invoice generator", () => {
     await expect(preview.getByText("Rahim Uddin", { exact: true })).toHaveCount(1)
   })
 
-  test("toggles quantity presentation without changing the editor field", async ({ page }) => {
+  test("toggles the printed quantity column without changing the editor field", async ({ page }) => {
     await page.goto("/")
 
-    await openStep(page, "Preview")
-    const preview = page.locator(".invoice-paper")
-    await expect(preview.getByText("Qty", { exact: true })).toBeVisible()
-    await page.getByRole("button", { name: "Customize" }).click()
-    const quantityDisplay = page.getByRole("checkbox", { name: "Show quantity column" })
-    await quantityDisplay.evaluate((element) => (element as HTMLInputElement).click())
-    await expect(quantityDisplay).not.toBeChecked()
-
+    // The switch lives with the ledger it changes now, not in the preview's
+    // display panel, so it is reachable without leaving the item step.
     await openStep(page, "Items")
+    const quantityColumn = page.getByRole("switch", { name: "Qty column" })
+    await expect(quantityColumn).toBeChecked()
+    await quantityColumn.click()
+    await expect(quantityColumn).not.toBeChecked()
+
+    // Hiding a printed column is a display choice, not a data change: the field a
+    // seller types a quantity into is still there.
     // The name is no longer a bare "Quantity" repeated on every card, so this
     // matches on the leading label text instead of an exact string.
     await expect(page.getByRole("spinbutton", { name: /^Quantity for item 1/ })).toBeVisible()
 
     await openStep(page, "Preview")
-    await expect(preview.getByText("Qty", { exact: true })).toHaveCount(0)
+    await expect(page.locator(".invoice-paper").getByText("Qty", { exact: true })).toHaveCount(0)
   })
 
   test("adds focused item cards and recovers from an empty list", async ({ page }) => {

@@ -104,13 +104,22 @@ const metrics = await page.evaluate(() => {
   // a 246px overlap with the cell before it. Hidden cells are also not placed, so
   // the remaining cells shift down a track — which is why the tracks are zipped
   // against the VISIBLE cells in order rather than against raw child indexes.
+  //
+  // The zip is over every visible child, not just the ones with text. Filtering
+  // on text as well used to drop an empty cell from the array and shift every
+  // index after it, so a row whose Amount had landed in the discount track was
+  // compared against the wrong track and reported clean — which is exactly the
+  // defect the conditional discount column could reintroduce. An empty cell is
+  // skipped for ink, never for indexing: a Range over no content measures 0×0 at
+  // the origin, which would read as a collision with everything to its left.
   const audit = (grid) => {
     const problems = []
     const cells = Array.from(grid.children).filter(
-      (cell) => getComputedStyle(cell).display !== "none" && cell.textContent.trim(),
+      (cell) => getComputedStyle(cell).display !== "none",
     )
     const tracks = trackWidths(grid)
     cells.forEach((cell, index) => {
+      if (!cell.textContent.trim()) return
       const b = ink(cell)
       const track = tracks[index]
       // The description is meant to wrap, so only the figures are held to their
@@ -118,7 +127,7 @@ const metrics = await page.evaluate(() => {
       if (index > 0 && track !== undefined && b.width - track > 0.5) {
         problems.push({ where: `"${cell.textContent.trim()}"`, overflowPx: Math.round((b.width - track) * 100) / 100 })
       }
-      const next = cells[index + 1]
+      const next = cells.slice(index + 1).find((candidate) => candidate.textContent.trim())
       if (next && b.right - ink(next).left > 0.5) {
         problems.push({
           where: `"${cell.textContent.trim()}" | "${next.textContent.trim()}"`,
@@ -139,7 +148,11 @@ const metrics = await page.evaluate(() => {
   // Overlap alone cannot catch this: a column nudged two pixels sideways without
   // touching its neighbour reports clean. So the tracks are compared directly.
   const trackLeft = (cell) => Math.round(cell.getBoundingClientRect().left * 10) / 10
-  const columnTracks = rows.map((row) => Array.from(row.children).map(trackLeft))
+  // The header is in this list on purpose. It is a `.invoice-line-grid` like every
+  // row, so a header whose `data-discount` disagrees with the rows resolves a
+  // different template, prints its labels over the wrong columns, and still
+  // passes an audit that only ever compares rows with each other.
+  const columnTracks = [header, ...rows].map((row) => Array.from(row.children).map(trackLeft))
   const misaligned = []
   if (columnTracks.length) {
     for (let column = 0; column < columnTracks[0].length; column += 1) {
@@ -147,6 +160,16 @@ const metrics = await page.evaluate(() => {
       if (xs.length > 1) misaligned.push({ column, distinctX: xs.length, xs: xs.slice(0, 4) })
     }
   }
+
+  // Every grid must agree on which columns are printed, and must place exactly as
+  // many cells as its template has tracks. A row with one cell missing still
+  // looks internally aligned — its cells just occupy the wrong tracks — so the
+  // count is the assertion that catches a conditional column that was dropped
+  // from the header but not the rows, or the other way round.
+  const flagSets = [...new Set(grids.map((grid) => `${grid.dataset.qty}/${grid.dataset.discount}`))]
+  const cellMismatch = grids
+    .map((grid, index) => ({ index, cells: grid.children.length, tracks: trackWidths(grid).length }))
+    .filter((grid) => grid.cells !== grid.tracks)
 
   // The page height must be READ, not re-derived. It used to be recomputed from
   // the sheet's own width as `scrollWidth * A4_RATIO`, which was only ever valid
@@ -201,6 +224,9 @@ const metrics = await page.evaluate(() => {
     bandSideClipPx,
     bandBottomFraction: Math.round(bandBottomFraction * 1000) / 1000,
     misaligned,
+    flagSets,
+    cellMismatch,
+    columnCount: trackWidths(header).length,
     pageSheets: document.querySelectorAll(".invoice-page").length,
     breakRules: document.querySelectorAll(".paper-break").length,
     overlayInsideSheet: Boolean(sheet.querySelector(".paper-break")),
@@ -211,6 +237,84 @@ const metrics = await page.evaluate(() => {
 })
 
 console.log("METRICS", JSON.stringify(metrics, null, 2))
+
+// Second pass: the state the fixture above never builds.
+//
+// Every line in that fixture carries a discount, so only the five-column template
+// is ever measured. The discount column is conditional and the quantity column is
+// switchable, which makes the four- and three-column templates real documents —
+// and a cell missing from a row is invisible to a per-row audit, because that row
+// is still aligned with itself. This pass removes every discount and turns the
+// quantity column off, then asserts the smallest template the app can print.
+const discounts = page.locator('select[id^="discount-type-"]:visible')
+for (let index = 0, total = await discounts.count(); index < total; index += 1) {
+  await discounts.nth(index).selectOption("none")
+}
+await page.getByRole("switch", { name: "Qty" }).click()
+await page.waitForTimeout(1000)
+const compact = await page.evaluate(() => {
+  const sheet = document.querySelector(".invoice-paper")
+  const grids = Array.from(sheet.querySelectorAll(".invoice-line-grid"))
+  const header = grids[0]
+  const rows = grids.slice(1)
+  const trackWidths = (grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").map((value) => Number.parseFloat(value))
+  const tracks = (grid) => trackWidths(grid).length
+  const ink = (node) => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    return range.getBoundingClientRect()
+  }
+  // The compact template is audited, not just counted. Track COUNT is satisfied by
+  // a row whose Amount has landed in the Price track — the cells are present, the
+  // indexes are wrong, and every row still agrees with itself. Ink against track,
+  // and cell lefts against the header, are what catch that.
+  const collisions = []
+  for (const grid of grids) {
+    const cells = Array.from(grid.children).filter((cell) => getComputedStyle(cell).display !== "none")
+    const widths = trackWidths(grid)
+    cells.forEach((cell, index) => {
+      if (!cell.textContent.trim()) return
+      const box = ink(cell)
+      if (index > 0 && widths[index] !== undefined && box.width - widths[index] > 0.5) {
+        collisions.push({ where: `"${cell.textContent.trim()}"`, overflowPx: Math.round((box.width - widths[index]) * 100) / 100 })
+      }
+      const next = cells.slice(index + 1).find((candidate) => candidate.textContent.trim())
+      if (next && box.right - ink(next).left > 0.5) {
+        collisions.push({ where: `"${cell.textContent.trim()}" | "${next.textContent.trim()}"`, overlapPx: Math.round((box.right - ink(next).left) * 100) / 100 })
+      }
+    })
+  }
+  const lefts = [header, ...rows].map((row) => Array.from(row.children).map((cell) => Math.round(cell.getBoundingClientRect().left * 10) / 10))
+  const misaligned = []
+  for (let column = 0; column < (lefts[0]?.length ?? 0); column += 1) {
+    const xs = [...new Set(lefts.map((row) => row[column]))]
+    if (xs.length > 1) misaligned.push({ column, distinctX: xs.length, xs: xs.slice(0, 4) })
+  }
+  const page = document.querySelector(".invoice-page")
+  const pageBox = page?.getBoundingClientRect()
+  const canonicalWidth = Number.parseFloat(document.querySelector(".invoice-pages")?.style.width ?? "")
+  const scale = pageBox && canonicalWidth ? pageBox.width / canonicalWidth : 1
+  const pageHeightPx = pageBox ? Math.round(pageBox.height) : 0
+  const marginPx = pageBox ? Math.round((sheet.getBoundingClientRect().top - pageBox.top) / scale) : 0
+  const badge = Array.from(document.querySelectorAll('[role="status"]'))
+    .map((node) => node.textContent?.trim())
+    .find((text) => text?.includes("page"))
+
+  return {
+    grids: grids.length,
+    trackCounts: [...new Set(grids.map(tracks))],
+    cellMismatch: grids.filter((grid) => grid.children.length !== tracks(grid)).length,
+    flagSets: [...new Set(grids.map((grid) => `${grid.dataset.qty}/${grid.dataset.discount}`))],
+    descriptionTrack: Math.round(Number.parseFloat(getComputedStyle(header).gridTemplateColumns) * 100) / 100,
+    collisions,
+    misaligned,
+    scrollHeight: sheet.scrollHeight,
+    pageHeightPx,
+    contentBoxHeightPx: pageHeightPx - marginPx * 2,
+    statedPages: badge ? Number.parseInt(badge.match(/\d+/)?.[0] ?? "", 10) : null,
+  }
+})
+console.log("COMPACT", JSON.stringify(compact, null, 2))
 await browser.close()
 
 // The thresholds are the point of the file. Printing a number and exiting 0 is
@@ -229,6 +333,19 @@ if (metrics.bandClipPx > 0) failures.push(`identity band is clipped by ${metrics
 if (metrics.bandSideClipPx > 0) failures.push(`identity band overflows sideways by ${metrics.bandSideClipPx}px; the invoice number or dates are cut off`)
 if (metrics.bandBottomFraction > 0.25) failures.push(`identity band ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one; the budget is 25%`)
 if (metrics.bandHeightPx <= 0) failures.push("identity band not found; the quarter-of-a-page check would pass by measuring nothing")
+// The column set is document-wide: a header that disagrees with its rows prints
+// its labels over the wrong figures and no per-grid audit can see it.
+if (metrics.flagSets.length !== 1 || metrics.flagSets[0] !== "true/true") failures.push(`line grids disagree on which columns print: ${JSON.stringify(metrics.flagSets)}`)
+if (metrics.cellMismatch.length) failures.push(`cells do not fill their tracks: ${JSON.stringify(metrics.cellMismatch)}`)
+if (compact.trackCounts.length !== 1 || compact.trackCounts[0] !== 3) failures.push(`quantity off and no discounts should print 3 columns, found ${JSON.stringify(compact.trackCounts)}`)
+if (compact.cellMismatch) failures.push(`compact layout has ${compact.cellMismatch} grid(s) whose cell count does not match their tracks`)
+if (compact.flagSets.length !== 1 || compact.flagSets[0] !== "false/false") failures.push(`compact layout still reports ${JSON.stringify(compact.flagSets)}`)
+if (compact.descriptionTrack < 60) failures.push(`compact description track collapsed to ${compact.descriptionTrack}px`)
+if (compact.collisions.length) failures.push(`compact layout collisions: ${JSON.stringify(compact.collisions)}`)
+if (compact.misaligned.length) failures.push(`compact columns not aligned across rows: ${JSON.stringify(compact.misaligned)}`)
+if (compact.statedPages !== null && compact.statedPages * compact.contentBoxHeightPx + 4 < compact.scrollHeight) {
+  failures.push(`compact badge says ${compact.statedPages} pages but ${compact.scrollHeight}px of content does not fit ${compact.statedPages} content box(es) of ${compact.contentBoxHeightPx}px`)
+}
 if (metrics.statedPages !== null && metrics.statedPages * metrics.contentBoxHeightPx + 4 < metrics.scrollHeight) {
   failures.push(`badge says ${metrics.statedPages} pages but ${metrics.scrollHeight}px of content does not fit ${metrics.statedPages} content box(es) of ${metrics.contentBoxHeightPx}px`)
 }
@@ -238,6 +355,7 @@ if (failures.length) {
   for (const failure of failures) console.error(` - ${failure}`)
   process.exit(1)
 }
-console.log(`\nOK: ${metrics.lineCount} rows aligned on ${metrics.rowCells ?? 5} columns, description track ${metrics.descriptionTrack}px, ` +
+console.log(`\nOK: ${metrics.lineCount} rows aligned on ${metrics.columnCount} columns, description track ${metrics.descriptionTrack}px, ` +
   `${metrics.statedPages} page(s) of a ${metrics.pageHeightPx}px frame (${metrics.contentBoxHeightPx}px content box, ${metrics.marginPx}px margin), no text collisions, rules outside the measured sheet.`)
+console.log(`OK: compact layout prints ${compact.trackCounts[0]} columns, every grid fills its tracks, description track ${compact.descriptionTrack}px.`)
 console.log(`OK: identity band ${metrics.bandHeightPx}px tall, ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one, nothing clipped.`)
