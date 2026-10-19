@@ -156,6 +156,24 @@ const metrics = await page.evaluate(() => {
   // badge text then produced NaN pages.
   const page = document.querySelector(".invoice-page")
   const pageHeightPx = page ? Math.round(page.getBoundingClientRect().height) : 0
+  // The identity band — logo, number, dates, both parties — must finish inside the
+  // top quarter of the paper. This was previously unchecked: `check:table` only
+  // ever looked at `.invoice-line-grid`, so the band could grow to 40% of page one
+  // (or hit its cap by clipping a phone number) and the gate still reported OK.
+  //
+  // `scrollHeight > clientHeight` is the assertion that matters. The band is
+  // `overflow: hidden` with a max-height backstop, so a too-tall band does not
+  // change the page geometry at all — it silently deletes the last line of the
+  // buyer's address, in the preview and in both exports.
+  const band = sheet.querySelector("[data-identity-band]")
+  const bandBox = band?.getBoundingClientRect()
+  const bandHeightPx = band ? Math.round(bandBox.height) : 0
+  const bandClipPx = band ? Math.max(0, band.scrollHeight - band.clientHeight) : 0
+  // Horizontal overflow is the same failure in the other axis: the band is a
+  // clipped box, so a nowrap date line or a long invoice number would be cut off
+  // with no vertical symptom at all.
+  const bandSideClipPx = band ? Math.max(0, band.scrollWidth - band.clientWidth) : 0
+  const bandBottomFraction = bandBox && page ? (bandBox.bottom - page.getBoundingClientRect().top) / page.getBoundingClientRect().height : 0
   // The frame is the paper; the flow advances by the CONTENT box inside it. The
   // badge guard below has to compare against the content box, because that is the
   // number of pixels a page actually holds. Reading the frame there left the guard
@@ -178,6 +196,10 @@ const metrics = await page.evaluate(() => {
     pageHeightPx,
     contentBoxHeightPx,
     marginPx,
+    bandHeightPx,
+    bandClipPx,
+    bandSideClipPx,
+    bandBottomFraction: Math.round(bandBottomFraction * 1000) / 1000,
     misaligned,
     pageSheets: document.querySelectorAll(".invoice-page").length,
     breakRules: document.querySelectorAll(".paper-break").length,
@@ -201,6 +223,12 @@ if (metrics.lineCount !== HUGE) failures.push(`expected ${HUGE} line rows, found
 if (metrics.descriptionTrack < 60) failures.push(`description track collapsed to ${metrics.descriptionTrack}px`)
 if (metrics.overlayInsideSheet) failures.push("page-break rules are inside the measured sheet and inflate its scrollHeight")
 if (metrics.marginPx <= 0) failures.push(`page margin measured as ${metrics.marginPx}px; the flow must sit inside the paper`)
+// The band is allowed to be ANY height up to the quarter line, but it must never
+// be cut off to get there: a clipped band is missing data on a legal document.
+if (metrics.bandClipPx > 0) failures.push(`identity band is clipped by ${metrics.bandClipPx}px; its last line is missing from the preview and both exports`)
+if (metrics.bandSideClipPx > 0) failures.push(`identity band overflows sideways by ${metrics.bandSideClipPx}px; the invoice number or dates are cut off`)
+if (metrics.bandBottomFraction > 0.25) failures.push(`identity band ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one; the budget is 25%`)
+if (metrics.bandHeightPx <= 0) failures.push("identity band not found; the quarter-of-a-page check would pass by measuring nothing")
 if (metrics.statedPages !== null && metrics.statedPages * metrics.contentBoxHeightPx + 4 < metrics.scrollHeight) {
   failures.push(`badge says ${metrics.statedPages} pages but ${metrics.scrollHeight}px of content does not fit ${metrics.statedPages} content box(es) of ${metrics.contentBoxHeightPx}px`)
 }
@@ -212,3 +240,4 @@ if (failures.length) {
 }
 console.log(`\nOK: ${metrics.lineCount} rows aligned on ${metrics.rowCells ?? 5} columns, description track ${metrics.descriptionTrack}px, ` +
   `${metrics.statedPages} page(s) of a ${metrics.pageHeightPx}px frame (${metrics.contentBoxHeightPx}px content box, ${metrics.marginPx}px margin), no text collisions, rules outside the measured sheet.`)
+console.log(`OK: identity band ${metrics.bandHeightPx}px tall, ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one, nothing clipped.`)

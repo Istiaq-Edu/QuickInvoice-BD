@@ -638,6 +638,11 @@ export default function Home() {
           shift += next[keys[index]]
           const top = natural[index] + shift
           const bottom = top + heights[index]
+          // A block taller than a page cannot be kept whole by moving it: there is
+          // no position where it fits. Pushing it would only add a blank page in
+          // front of it and leave it straddling the next boundary anyway, so it is
+          // left where it is. Long notes are the realistic case.
+          if (heights[index] >= page - 1) continue
           for (let edge = page; edge < bottom - 0.5; edge += page) {
             if (top < edge - 0.5) {
               offender = index
@@ -1479,10 +1484,65 @@ export default function Home() {
                           {paidStamp && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center select-none">
                             <span className="-rotate-[28deg] whitespace-nowrap border-[6px] border-emerald-600/25 px-8 py-2 font-heading text-6xl font-bold uppercase tracking-[0.18em] text-emerald-600/25 sm:text-7xl">Paid</span>
                           </div>}
-                          <div className={`relative z-[1] flex items-start justify-between gap-6 border-b-2 pb-4 ${accentStyle.rule}`}><div className="min-w-0">{logoUrl && <Image src={logoUrl} alt="Seller logo" width={96} height={48} sizes="96px" unoptimized className="mb-2.5 h-auto w-auto max-h-12 max-w-24 object-contain object-left" />}<p className={`text-2xl font-bold tracking-tight ${accentStyle.heading}`}>{sellerCompanyName || "Your company name"}</p><p className="mt-0.5 text-sm font-medium text-slate-600">{sellerName || "Seller name"}</p>{templateSettings.showAddresses && <p className="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{sellerAddress || "Your address"}</p>}{templateSettings.showSellerContact && (sellerEmail || sellerPhone) && <p className="mt-1 text-xs text-slate-500">{[sellerEmail, sellerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="shrink-0 text-right"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Invoice</p><p className="mt-0.5 text-2xl font-bold tracking-tight text-slate-900">{invoiceNumber || "DRAFT"}</p></div></div>                          {/* An invoice raised to settle a balance says so on its face,
+                          {/* The identity band — logo, invoice number, dates, seller and
+                              buyer — has to finish inside the top quarter of the paper.
+                              It used to be a masthead plus a separate bill-to block, and
+                              on an address-heavy invoice the two together ate 40% of the
+                              first page and pushed the line items down.
+
+                              Three changes buy the height. The dates moved into the
+                              masthead, because a third column cost the addresses ~90px of
+                              a 432px sheet and made every line wrap one row earlier; the
+                              two parties share one two-column row instead of following
+                              one another; and each contact line is a real line rather
+                              than an email and a phone joined by a separator that wrapped
+                              mid-glyph.
+
+                              There is deliberately NO max-height here. An earlier cut
+                              capped the band and hit 25% by clipping the buyer's phone
+                              number — the rasterised PDF and DOCX kept the truncation
+                              because they screenshot this exact node. The band is sized
+                              by its type instead: the fixture the gate uses measures
+                              ~24% of the paper, and a longer address makes the band
+                              taller rather than shorter of a line. `check:table` asserts
+                              both halves — under 25%, and scrollHeight equal to
+                              clientHeight, so a future edit cannot reintroduce the clip. */}
+                          <div data-identity-band className="relative z-[1]">
+                            <div className={`flex items-start justify-between gap-5 border-b-2 pb-2 ${accentStyle.rule}`}>
+                              {/* `flex-1 min-w-0` + `max-w-full` is what keeps the logo out of
+                                  the dates: the mark is the only flexible child, so a wide
+                                  logo shrinks to the space the invoice meta leaves instead of
+                                  painting under it. A fixed `max-w-[150px]` did exactly that
+                                  collision — the image overflowed a `shrink-0` sibling. */}
+                              <div className="flex min-w-0 flex-1 items-center pr-3">{logoUrl && <Image src={logoUrl} alt="Seller logo" width={150} height={72} sizes="150px" unoptimized className="h-auto max-h-8 w-auto max-w-full object-contain object-left" />}</div>
+                              <div className="flex shrink-0 flex-col items-end text-right">
+                                <p className="flex items-baseline gap-2"><span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Invoice</span><span className={`break-all font-bold leading-none tracking-tight text-slate-900 ${(invoiceNumber?.length ?? 0) > 12 ? "text-sm" : "text-xl"}`}>{invoiceNumber || "DRAFT"}</span></p>
+                                <p className="whitespace-nowrap text-[9px] leading-[1.35] text-slate-500">Issued <span className="font-medium text-slate-700">{formatDate(issueDate)}</span> · Due <span className="font-medium text-slate-700">{formatDate(dueDate)}</span></p>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-5 border-b border-slate-200 py-1 text-[9.5px] leading-[1.3]">
+                              <div className="min-w-0">
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">From</p>
+                                <p className={`mt-1 break-words text-[12px] font-bold leading-[1.2] ${accentStyle.heading}`}>{sellerCompanyName || "Your company name"}</p>
+                                {sellerName && <p className="break-words text-slate-600">{sellerName}</p>}
+                                {templateSettings.showAddresses && sellerAddress && <p className="whitespace-pre-line break-words text-slate-500">{sellerAddress}</p>}
+                                {templateSettings.showSellerContact && (sellerEmail || sellerPhone) && <p className="break-words text-slate-500">{sellerEmail}{sellerEmail && sellerPhone ? <br /> : null}{sellerPhone}</p>}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Bill to</p>
+                                <p className="mt-1 break-words text-[12px] font-bold leading-[1.2] text-slate-900">{billTo.heading}</p>
+                                {billTo.contact && <p className="break-words text-slate-600">{billTo.contact}</p>}
+                                {templateSettings.showAddresses && buyerAddress && <p className="whitespace-pre-line break-words text-slate-500">{buyerAddress}</p>}
+                                {templateSettings.showBuyerContact && (buyerEmail || buyerPhone) && <p className="break-words text-slate-500">{buyerEmail}{buyerEmail && buyerPhone ? <br /> : null}{buyerPhone}</p>}
+                              </div>
+                            </div>
+                          </div>
+                          {/* An invoice raised to settle a balance says so on its face,
                               with the arithmetic, so the reader can see it is not a
-                              second charge for the same work. */}
-                          {carriedForward && <div className="relative z-[1] mb-6 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-5 text-slate-600">
+                              second charge for the same work. It sits BELOW the identity
+                              band on purpose: the band is capped at a quarter of the page,
+                              and a notice wedged inside it would push the parties past it. */}
+                          {carriedForward && <div className="relative z-[1] mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-[11px] leading-4 text-slate-600">
                             <p className="font-semibold uppercase tracking-[0.14em] text-slate-500">Balance of {carriedForward.invoiceNumber ?? "a previous invoice"}</p>
                             <div className="mt-1.5 space-y-0.5">
                               <div className="flex justify-between gap-4"><span>Original invoice</span><span className="font-medium"><MoneyText text={formatMoney(carriedForward.originalTotal)} /></span></div>
@@ -1490,7 +1550,21 @@ export default function Home() {
                               <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
                             </div>
                           </div>}
-                          <div className="grid gap-3 border-b border-slate-200 py-4 text-sm sm:grid-cols-[1.55fr_1fr]"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Bill to</p><p className="mt-1.5 text-[0.95rem] font-bold">{billTo.heading}</p>{billTo.contact && <p className="mt-0.5 text-sm font-medium text-slate-600">{billTo.contact}</p>}{templateSettings.showAddresses && <p className="mt-0.5 whitespace-pre-line text-xs leading-5 text-slate-500">{buyerAddress || "Customer address"}</p>}{templateSettings.showBuyerContact && (buyerEmail || buyerPhone) && <p className="mt-0.5 text-xs text-slate-500">{[buyerEmail, buyerPhone].filter(Boolean).join(" · ")}</p>}</div><div className="sm:text-right"><div className="flex justify-between gap-2 text-xs sm:justify-end"><span className="whitespace-nowrap text-slate-500">Issue date</span><span className="whitespace-nowrap font-medium">{formatDate(issueDate)}</span></div><div className="mt-1.5 flex justify-between gap-2 text-xs sm:justify-end"><span className="whitespace-nowrap text-slate-500">Due date</span><span className="whitespace-nowrap font-medium">{formatDate(dueDate)}</span></div></div></div><div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span><span className="text-right">Discount</span><span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span><span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span><span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && <div className="mt-8 border-t border-slate-200 pt-5 text-xs leading-5 text-slate-500"><p className="mb-1 font-semibold text-slate-700">Notes</p><p className="whitespace-pre-line">{notes}</p></div>}
+<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span><span className="text-right">Discount</span><span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span><span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span><span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
+  <div className="pt-6 text-[10.5px] leading-[1.6] text-slate-500">
+    <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Notes</p>
+    {/* One keep-key PER LINE, not one for the block. A note can run to 10,000
+        characters, and keeping that whole would either waste a page or — if it
+        were allowed to split — have the exporter slice a line in half at an exact
+        pixel offset. Per line, the flow breaks between terms and fills the page. */}
+    {notes.split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
+      const key = `note-${index}`
+      return (
+        <p key={key} data-keep-key={key} style={{ marginTop: `${keepSpacers[key] ?? 0}px` }} className="whitespace-pre-wrap break-words text-slate-700">{line}</p>
+      )
+    })}
+  </div>
+)}
     </>
   )
   return (
