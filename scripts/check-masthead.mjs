@@ -213,6 +213,13 @@ const metrics = await page.evaluate(() => {
   }
   const totalsPage = pageIndexOf(totals)
   const notesPage = pageIndexOf(notesBlock)
+  const notesBox = notesBlock?.getBoundingClientRect()
+  const notesTop = notesBox ? (notesBox.top - pageTop) / closingScale : 0
+  const notesBottom = notesBox ? (notesBox.bottom - pageTop) / closingScale : 0
+  const notesCrosses = []
+  for (let edge = 630.5; edge < notesBottom; edge += 630.5) {
+    if (notesTop < edge - 0.5 && notesBottom > edge + 0.5) notesCrosses.push(edge)
+  }
   const band = sheet.querySelector("[data-identity-band]")
   const bandBox = band?.getBoundingClientRect()
   const bandHeightPx = band ? Math.round(bandBox.height) : 0
@@ -247,6 +254,7 @@ const metrics = await page.evaluate(() => {
     bandHeightPx,
     bandClipPx,
     totalsCrosses,
+    notesCrosses,
     totalsPage,
     notesPage,
     bandSideClipPx,
@@ -362,7 +370,10 @@ if (metrics.bandSideClipPx > 0) failures.push(`identity band overflows sideways 
 if (metrics.bandBottomFraction > 0.25) failures.push(`identity band ends ${(metrics.bandBottomFraction * 100).toFixed(1)}% down page one; the budget is 25%`)
 if (metrics.bandHeightPx <= 0) failures.push("identity band not found; the quarter-of-a-page check would pass by measuring nothing")
 if (metrics.totalsCrosses.length) failures.push(`subtotal/total block is split across a page boundary at ${metrics.totalsCrosses.join(", ")}px`)
-if (metrics.notesPage >= 0 && metrics.totalsPage !== metrics.notesPage) failures.push(`closing block is divided: totals on page ${metrics.totalsPage + 1}, notes on page ${metrics.notesPage + 1}`)
+// The notes are a footer: they sit at the foot of their page when they fit
+// after the totals, and start the next page as one block when they do not. What
+// must never happen is the block being cut by a page edge.
+if (metrics.notesCrosses.length) failures.push(`notes block is cut by a page boundary at ${metrics.notesCrosses.join(", ")}px`)
 // The column set is document-wide: a header that disagrees with its rows prints
 // its labels over the wrong figures and no per-grid audit can see it.
 if (metrics.flagSets.length !== 1 || metrics.flagSets[0] !== "true/true") failures.push(`line grids disagree on which columns print: ${JSON.stringify(metrics.flagSets)}`)

@@ -686,36 +686,23 @@ export default function Home() {
         next[keys[offender]] = Math.ceil(preceding + boundary - natural[offender])
       }
 
-      // Keep the totals on the same page as the notes.
+      // Pin the notes to the foot of their page when they FIT after the totals.
       //
-      // The notes are pinned to the bottom of the LAST page with `mt-auto`, and
-      // the totals flow after the line items. On a document that ends just short
-      // of a page boundary, the totals fit on page one but the notes do not, so
-      // the notes alone are pushed to page two — the closing block is split and
-      // the totals look stranded at the foot of a page with nothing under them.
-      // The totals move to the page the notes landed on instead, so "subtotal /
-      // total / notes" is never divided.
-      //
-      // The target is the PAGE BOUNDARY. Anchoring the totals just above the
-      // notes was tried twice and is a feedback loop: the notes are pinned to the
-      // flow's foot, so moving the totals down pushes them down, the flow grows,
-      // the notes land on a later page, and the totals chase them — 96 pages in
-      // the gate fixture. The boundary is a fixed point; the notes' position is
-      // not.
-      const totalsIndex = keys.indexOf("totals")
-      const notesBlock = content.querySelector<HTMLElement>("[data-notes-block]")
-      if (totalsIndex >= 0 && notesBlock) {
-        let totalsShift = 0
-        for (let index = 0; index <= totalsIndex; index += 1) totalsShift += next[keys[index]]
-        const totalsTop = natural[totalsIndex] + totalsShift
-        const notesBox = notesBlock.getBoundingClientRect()
-        const notesTop = (notesBox.top - contentRect.top) / scale
-        const totalsPage = Math.floor(totalsTop / page)
-        const notesPage = Math.floor(notesTop / page)
-        if (notesPage > totalsPage) {
-          let before = 0
-          for (let index = 0; index < totalsIndex; index += 1) before += next[keys[index]]
-          next.totals = Math.max(0, Math.ceil(before + notesPage * page - natural[totalsIndex]))
+      // This is a spacer, not `margin-top: auto`. The auto margin forced the flow
+      // to be padded with `min-height`, and that padding is part of `scrollHeight`
+      // — which the paginator reads back as content. A document that once grew to
+      // two pages could therefore never shrink again: delete rows or clear the
+      // notes and it still reported two pages, and the export carried a blank
+      // one. A spacer is ordinary layout, so the flow's height is the real
+      // content height and the page count follows it down as well as up.
+      const notesIndex = keys.indexOf("notes")
+      if (notesIndex >= 0) {
+        let before = 0
+        for (let index = 0; index < notesIndex; index += 1) before += next[keys[index]]
+        const stackedTop = natural[notesIndex] + before
+        const pageBottom = (Math.floor((stackedTop - 1) / page) + 1) * page
+        if (stackedTop + heights[notesIndex] <= pageBottom + 0.5) {
+          next.notes = Math.max(0, Math.floor(pageBottom - heights[notesIndex] - natural[notesIndex] - before))
         }
       }
 
@@ -766,6 +753,12 @@ export default function Home() {
     const showDiscount = previewDiscountColumn
 
     const measure = () => {
+      // The sheet is laid out at 432px and drawn at whatever scale the column
+      // affords, so a rect is in SCREEN pixels. Writing that straight into the
+      // column variables under-sized every money track by the scale factor — at
+      // 375px the Amount column came out ~40px narrow and the figures ran off the
+      // sheet, in the preview AND in the exported PDF, which clones these styles.
+      const scale = flow.getBoundingClientRect().width / contentBoxWidthPx() || 1
       const rows = Array.from(flow.querySelectorAll<HTMLElement>(".invoice-line-grid"))
       // Cell index of each money column, matching the order the CSS declares.
       const columns: Array<{ name: string; index: number }> = []
@@ -783,7 +776,7 @@ export default function Home() {
           const cell = cells[column.index]
           if (!cell) continue
           range.selectNodeContents(cell)
-          const measured = range.getBoundingClientRect().width
+          const measured = range.getBoundingClientRect().width / scale
           if (measured > (widths.get(column.name) ?? 0)) widths.set(column.name, measured)
         }
       }
@@ -1685,19 +1678,15 @@ export default function Home() {
                               <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
                             </div>
                           </div>}
-<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto w-full max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
-  <div data-notes-block className="mt-auto pb-1 pt-6 text-[10.5px] leading-[1.6] text-slate-500">
+<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto w-full max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
+  <div
+    data-keep-key="notes"
+    data-notes-block
+    style={{ marginTop: `${keepSpacers.notes ?? 0}px` }}
+    className="pb-1 pt-6 text-[10.5px] leading-[1.6] text-slate-500"
+  >
     <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Notes</p>
-    {/* One keep-key PER LINE, not one for the block. A note can run to 10,000
-        characters, and keeping that whole would either waste a page or — if it
-        were allowed to split — have the exporter slice a line in half at an exact
-        pixel offset. Per line, the flow breaks between terms and fills the page. */}
-    {notes.split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
-      const key = `note-${index}`
-      return (
-        <p key={key} data-keep-key={key} style={{ marginTop: `${keepSpacers[key] ?? 0}px` }} className="whitespace-pre-wrap break-words text-slate-700">{line}</p>
-      )
-    })}
+    <p className="whitespace-pre-wrap break-words text-slate-700">{notes}</p>
   </div>
 )}
     </>
@@ -1998,18 +1987,6 @@ export default function Home() {
                                   style={{
                                     width: contentBoxWidthPx(),
                                     transform: `translateY(${-previewPageIndex * paperGeometry.pageHeightPx}px)`,
-                                    // Pad the flow out to a WHOLE number of pages so the
-                                    // notes can sit on the bottom edge of the last one.
-                                    // Without it the flow ends wherever the last block
-                                    // ends, `mt-auto` has no free space to consume, and
-                                    // the notes float in the middle of the sheet. The
-                                    // value is derived from the geometry the paginator
-                                    // already reports, and padding only adds space AFTER
-                                    // the content, so the page count cannot oscillate:
-                                    // N * pageHeight re-measures as N pages.
-                                    minHeight: paperGeometry.pageHeightPx > 0
-                                      ? paperGeometry.pageCount * paperGeometry.pageHeightPx
-                                      : undefined,
                                   }}
                                 >
                                   {invoiceSheetContent}
