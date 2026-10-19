@@ -1,7 +1,6 @@
 export type DiscountType = "none" | "fixed" | "percentage"
 export type PaymentStatus = "unpaid" | "partial" | "paid" | "overdue"
 export type PaymentMethod = "cash" | "bank" | "mobile" | "card" | "other"
-export type InvoiceLifecycle = "draft" | "finalized" | "trashed"
 
 export type TemplateSettings = {
   accent: "slate" | "blue" | "emerald" | "indigo"

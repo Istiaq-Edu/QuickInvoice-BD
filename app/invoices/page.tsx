@@ -150,12 +150,10 @@ function buildInvoiceActions(
     actions.push({ icon: ClockAlert, label: "Mark as overdue", onSelect: () => void performAction(invoice, "payment_status", "overdue") })
   }
 
-  if (!isDraft) {
-    actions.push(
-      { href: `${editHref}&download=PDF`, icon: FileDown, label: "Download PDF", target: "_blank" },
-      { href: `${editHref}&download=DOCX`, icon: FileDown, label: "Download DOCX", target: "_blank" }
-    )
-  }
+  actions.push(
+    { href: `${editHref}&download=PDF`, icon: FileDown, label: "Download PDF", target: "_blank" },
+    { href: `${editHref}&download=DOCX`, icon: FileDown, label: "Download DOCX", target: "_blank" }
+  )
 
   actions.push({ destructive: true, icon: Trash2, label: "Move to Trash", onSelect: () => void performAction(invoice, "trash") })
 
@@ -439,7 +437,7 @@ export default function InvoiceHistoryPage() {
 
       {loading && <div className="surface p-8 text-sm text-muted-foreground">Loading invoice history⬦</div>}
       {error && !requiresAuthentication && <div className="rounded-xl border border-rose-400/25 bg-rose-500/10 p-5 text-sm text-destructive"><p>{error}</p><button className="mt-3 inline-flex h-9 items-center rounded-lg border border-rose-400/40 bg-card px-3 font-medium text-destructive hover:border-rose-400" type="button" onClick={() => { setLoading(true); setError(""); setRetry((value) => value + 1) }}>Try again</button></div>}
-      {!loading && requiresAuthentication && <div className="surface flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center"><span className="flex size-12 items-center justify-center rounded-2xl border border-border bg-muted text-primary"><LockKeyhole size={21} /></span><h2 className="mt-5 font-heading text-2xl font-medium">Your invoice history is private</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Sign in to view saved drafts, update payment status, download finalized invoices, and keep every record in one place.</p><div className="mt-6 flex flex-wrap justify-center gap-3"><Link className={buttonVariants()} href="/auth/login">Sign in to continue</Link><Link className={buttonVariants({ variant: "outline" })} href="/">Create a guest invoice</Link></div></div>}
+      {!loading && requiresAuthentication && <div className="surface flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center"><span className="flex size-12 items-center justify-center rounded-2xl border border-border bg-muted text-primary"><LockKeyhole size={21} /></span><h2 className="mt-5 font-heading text-2xl font-medium">Your invoice history is private</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Sign in to view saved invoices, update payment status, download copies, and keep every record in one place.</p><div className="mt-6 flex flex-wrap justify-center gap-3"><Link className={buttonVariants()} href="/auth/login">Sign in to continue</Link><Link className={buttonVariants({ variant: "outline" })} href="/">Create a guest invoice</Link></div></div>}
       {actionError && <div className="mb-5 rounded-lg border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-destructive" role="alert">{actionError}</div>}
       {/* The outstanding figure is the number a seller opens the page to see, so it
           leads the list. It is hidden while a filter is narrowing the view,

@@ -6,7 +6,7 @@ import dynamic from "next/dynamic"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "cn"
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, FileDown, Menu, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, FileDown, Menu, Plus, RotateCcw, Save, ShieldCheck, Trash2, Undo2, UserRound, X } from "lucide-react"
 import { useAdminStatus } from "@/components/admin-nav"
 import { BrandLogo } from "@/components/brand-logo"
 
@@ -184,9 +184,6 @@ export default function Home() {
   const pendingAutosave = useRef<AutosaveRequest | null>(null)
   const autosaveGeneration = useRef(0)
   const [exporting, setExporting] = useState(false)
-  const [finalizing, setFinalizing] = useState(false)
-  const [finalizeConfirmOpen, setFinalizeConfirmOpen] = useState(false)
-  const [savingDraft, setSavingDraft] = useState(false)
   const [loadingDraft, setLoadingDraft] = useState(false)
   const [loadingProfile, setLoadingProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
@@ -311,11 +308,11 @@ export default function Home() {
   }, [issueDate, dueTouched])
 
   // Due before issue is a scheduling mistake, not a preference. It is blocked
-  // here with an inline error before it can be autosaved, finalized, or
-  // exported, so every exit path agrees.
+  // here with an inline error before it can be autosaved or exported, so every
+  // exit path agrees.
   const dueBeforeIssue = Boolean(issueDate && dueDate && dueDate < issueDate)
-  // Guards both finalize and export. ESLint reported this as unused, which it is
-  // not: the rule appears to miss these two references inside the handlers.
+  // Guards export. ESLint reported this as unused, which it is not: the rule
+  // appears to miss the reference inside the handler.
   const datesInvalid = !issueDate || !dueDate || dueBeforeIssue
 
   useEffect(() => {
@@ -761,7 +758,7 @@ export default function Home() {
 
   useEffect(() => {
     // Due-before-issue is never persisted: autosaving it would store a schedule
-    // the finalize and export guards already refuse, leaving the draft behind.
+    // the export guard already refuses, leaving the draft behind.
     if (!accountEmail || loadingDraft || !issueDate || !dueDate || dueBeforeIssue || incomplete) return
 
     const generation = ++autosaveGeneration.current
@@ -782,8 +779,8 @@ export default function Home() {
         dueDate,
         discountType,
         discountValue: Number(discountValue) || 0,
-        // Drafts are always unpaid: the ledger derives the real status after
-        // finalizing, so persisting anything else would disagree with it.
+        // Drafts are always unpaid: the payment ledger owns the real status, so
+        // persisting anything else would disagree with it.
         paymentStatus: "unpaid",
         templateSettings,
         logoAssetId,
@@ -808,7 +805,6 @@ export default function Home() {
       }
 
       autosaveInFlight.current = true
-      setSavingDraft(true)
       if (nextRequest.generation === autosaveGeneration.current) setSaveState("Saving⬦")
       try {
         const response = await fetch(nextRequest.update ? "/api/invoices/update" : "/api/invoices/drafts", {
@@ -848,8 +844,6 @@ export default function Home() {
         pendingAutosave.current = null
         if (queuedRequest) {
           void save(queuedRequest)
-        } else {
-          setSavingDraft(false)
         }
       }
     }
@@ -1354,63 +1348,7 @@ export default function Home() {
       setTemplateSaving(false)
     }
   }
-  const finalizeInvoice = async () => {
-    if (!accountEmail) {
-      setMessage("Sign in before finalizing an invoice.")
-      return
-    }
-    if (datesInvalid) {
-      setMessage(dueBeforeIssue ? "Move the due date to the issue date or later before finalizing." : "Choose an issue date and a due date before finalizing.")
-      return
-    }
-    if (decimalField) {
-      setMessage("Quantities, unit prices and discounts must be whole numbers. Remove the decimal point and try again.")
-      return
-    }
-    if (incomplete) {
-      setMessage("Complete the required seller name, buyer name, buyer phone, and line-item fields before finalizing.")
-      return
-    }
-    if (autosavePending.current || autosaveInFlight.current || pendingAutosave.current) {
-      setMessage("Wait for the latest invoice changes to finish saving, then try again.")
-      return
-    }
-    if (!draftId.current || draftVersion.current === null) {
-      setMessage("Wait for the draft to finish saving, then try again.")
-      return
-    }
-    setFinalizeConfirmOpen(true)
-  }
-  const confirmFinalizeInvoice = async () => {
-    setFinalizeConfirmOpen(false)
-    setFinalizing(true)
-    setMessage("Finalizing invoice⬦")
-    try {
-      const response = await fetch("/api/invoices/finalize", {
-        body: JSON.stringify({ invoiceId: draftId.current, idempotencyKey: crypto.randomUUID(), version: draftVersion.current }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      })
-      const result = await response.json() as { invoiceNumber?: string; version?: number; error?: string }
-      if (!response.ok) {
-        setMessage(result.error ?? "Invoice could not be finalized.")
-        return
-      }
-      setInvoiceNumber(result.invoiceNumber ?? null)
-      draftVersion.current = result.version ?? draftVersion.current
-      setMessage(`Invoice ${result.invoiceNumber ?? ""} finalized. You can now download it.`)
-    } catch {
-      setMessage("Invoice finalization failed. Your draft was not changed. Please try again.")
-    } finally {
-      setFinalizing(false)
-    }
-  }
-
   const exportInvoice = async (format: "PDF" | "DOCX") => {
-    if (accountEmail && !invoiceNumber) {
-      setMessage("Finalize the invoice before downloading it.")
-      return
-    }
     if (datesInvalid) {
       setMessage(dueBeforeIssue ? "Move the due date to the issue date or later before exporting." : "Choose an issue date and a due date before exporting.")
       return
@@ -1441,13 +1379,6 @@ export default function Home() {
 
   useEffect(() => {
     if (!requestedExport || loadingDraft || exporting) return
-    if (accountEmail && !invoiceNumber) {
-      void Promise.resolve().then(() => {
-        setMessage("Finalize the invoice before downloading it.")
-        setRequestedExport(null)
-      })
-      return
-    }
     if (incomplete || datesInvalid || !previewRef.current) return
     const format = requestedExport
     void Promise.resolve().then(async () => {
@@ -1465,7 +1396,7 @@ export default function Home() {
         setExporting(false)
       }
     })
-  }, [accountEmail, datesInvalid, exporting, incomplete, invoiceNumber, loadingDraft, requestedExport])
+  }, [datesInvalid, exporting, incomplete, invoiceNumber, loadingDraft, requestedExport])
 
   // The document itself, laid out once and then drawn once per page sheet.
   //
@@ -1599,7 +1530,7 @@ export default function Home() {
               {[
                 ["01", "Add essentials", "Dates, parties and items"],
                 ["02", "Review", "Check the live A4 preview"],
-                ["03", "Send", "Finalize and export"],
+                ["03", "Send", "Review and export"],
               ].map(([number, title, description]) => <li className="rounded-xl border border-border/70 bg-muted/40 px-3 py-3" key={number}><span className="font-mono text-[10px] font-semibold text-primary">{number}</span><p className="mt-3 text-xs font-semibold text-foreground">{title}</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">{description}</p></li>)}
             </ol>
           </aside>
@@ -1623,7 +1554,7 @@ export default function Home() {
         </nav>
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(440px,0.84fr)] 2xl:gap-8">
-          <fieldset disabled={loadingDraft || finalizing} className="min-w-0 space-y-4 disabled:opacity-90" aria-label="Invoice form">
+          <fieldset disabled={loadingDraft} className="min-w-0 space-y-4 disabled:opacity-90" aria-label="Invoice form">
             <div className={`editor-section surface p-5 sm:p-7 xl:px-8 ${mobileStep === 0 ? "" : "hidden"} xl:block`}>
               <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <SectionHeading
@@ -1648,7 +1579,7 @@ export default function Home() {
                   <input id="due-date" className="field" type="date" required aria-required="true" aria-describedby="due-date-hint" aria-invalid={dueBeforeIssue ? true : undefined} min={issueDate || undefined} value={dueDate} onChange={(event) => { setDueTouched(true); setDueDate(event.target.value) }} />
                   {dueBeforeIssue && <p className="mt-1.5 text-xs font-medium leading-5 text-destructive" role="alert">Due date cannot be before the issue date.</p>}
                 </Field>
-                <Field label="Payment status" htmlFor="payment-status" hint={invoiceNumber ? "Managed from history after finalizing." : "New invoices start as Unpaid."}>
+                <Field label="Payment status" htmlFor="payment-status" hint={invoiceNumber ? "Managed from invoice history." : "New invoices start as Unpaid."}>
                   <select id="payment-status" className="field" aria-describedby="payment-status-hint" value="unpaid" disabled aria-disabled="true">
                     <option value="unpaid">Unpaid</option>
                   </select>
@@ -1846,7 +1777,7 @@ export default function Home() {
                           </div>
                         )}
             </div>
-              <div className="mt-5 border-t border-border/80 pt-5">{accountEmail && !invoiceNumber && <Button type="button" className="mb-3 h-11 w-full" disabled={finalizing || exporting || savingDraft} onClick={finalizeInvoice}>{finalizing ? "Finalizing⬦" : savingDraft ? "Saving draft⬦" : "Finalize invoice"}</Button>}<div className="grid gap-3 sm:grid-cols-2"><Button type="button" variant="outline" className="h-11" disabled={exporting || finalizing} onClick={() => exportInvoice("PDF")}><FileDown data-icon="inline-start" />Download PDF</Button><Button type="button" className="h-11" disabled={exporting || finalizing} onClick={() => exportInvoice("DOCX")}><FileDown data-icon="inline-start" />Download DOCX</Button></div>{message && <p className="mt-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground" role="status">{message}</p>}<p className="mt-3 text-center text-xs text-muted-foreground">{accountEmail ? "Finalized invoices stay in your history, where you can edit them or record a payment." : "Sign in later to save invoice history across devices."}</p></div>
+              <div className="mt-5 border-t border-border/80 pt-5"><div className="grid gap-3 sm:grid-cols-2"><Button type="button" variant="outline" className="h-11" disabled={exporting} onClick={() => exportInvoice("PDF")}><FileDown data-icon="inline-start" />Download PDF</Button><Button type="button" className="h-11" disabled={exporting} onClick={() => exportInvoice("DOCX")}><FileDown data-icon="inline-start" />Download DOCX</Button></div>{message && <p className="mt-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground" role="status">{message}</p>}<p className="mt-3 text-center text-xs text-muted-foreground">{accountEmail ? "Saved invoices stay in your history, where you can reopen or download them." : "Sign in later to save invoice history across devices."}</p></div>
             </div>
 
           </section>
@@ -1857,13 +1788,12 @@ export default function Home() {
           <Button className="h-11 flex-1" variant="outline" type="button" disabled={mobileStep === 0} onClick={() => goToStep(mobileStep - 1)}>Back</Button>
           {mobileStep < mobileSteps.length - 1
             ? <Button className="h-11 flex-1" type="button" onClick={() => goToStep(mobileStep + 1)}>{mobileStep === mobileSteps.length - 2 ? "Review preview" : "Next"}</Button>
-            : <Button className="h-11 flex-1" type="button" disabled={exporting || finalizing} onClick={() => void exportInvoice("PDF")}><FileDown data-icon="inline-start" />{exporting ? "Preparing⬦" : "Download PDF"}</Button>}
+            : <Button className="h-11 flex-1" type="button" disabled={exporting} onClick={() => void exportInvoice("PDF")}><FileDown data-icon="inline-start" />{exporting ? "Preparing⬦" : "Download PDF"}</Button>}
         </div>
       </div>
       {profileDrawer && <ProfileDrawer kind={profileDrawer} open={drawerOpen} onClose={closeProfileDrawer} sellerProfile={savedSellerProfile} sellerStatus={sellerProfileStatus} sellerLoading={loadingProfile} onApplySeller={applySellerProfile} customers={savedCustomers} customerStatus={customerStatus} customerLoading={loadingCustomers} onApplyCustomer={applyCustomer} />}
       {libraryDrawer && <SavedLibraryDrawer kind={libraryDrawer} items={savedItems} notes={savedNoteTemplates} query={libraryQuery} status={libraryStatus} loading={libraryLoading} onQueryChange={setLibraryQuery} onSearch={(query) => void loadLibrary(libraryDrawer, query)} onClose={() => setLibraryDrawer(null)} onAddItem={applySavedItem} onApplyNote={applySavedNote} onDelete={(id) => void deleteLibraryEntry(libraryDrawer, id)} />}
       {noteSaveOpen && <NoteSaveDialog title={noteSaveTitle} onTitleChange={setNoteSaveTitle} onClose={() => setNoteSaveOpen(false)} onSave={() => void saveNoteTemplate()} />}
-      {finalizeConfirmOpen && <FinalizeConfirmDialog onClose={() => setFinalizeConfirmOpen(false)} onConfirm={() => void confirmFinalizeInvoice()} />}
       {pendingCrop && (
         <LogoCropper
           file={pendingCrop}
@@ -1922,32 +1852,6 @@ function NoteSaveDialog({ title, onTitleChange, onClose, onSave }: { title: stri
       <p className="mt-2 text-sm leading-6 text-muted-foreground">Give this note a short title so you can recognize it later.</p>
       <label className="mt-5 block"><span className="mb-2 block text-sm font-medium text-foreground/80">Note title</span><input className="field" autoFocus maxLength={200} value={title} onChange={(event) => onTitleChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && title.trim()) onSave() }} placeholder="Payment terms" /></label>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!title.trim()} onClick={onSave}>Save note</Button></div>
-    </section>
-  </div>
-}
-
-function FinalizeConfirmDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => void }) {
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose()
-    }
-    document.addEventListener("keydown", handleEscape)
-    return () => document.removeEventListener("keydown", handleEscape)
-  }, [onClose])
-
-  return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4 backdrop-blur-[2px]" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="w-full max-w-md surface p-6 shadow-2xl shadow-stone-950/15" role="dialog" aria-modal="true" aria-labelledby="finalize-dialog-title" aria-describedby="finalize-dialog-description" onClick={(event) => event.stopPropagation()}>
-      <div className="flex items-start gap-4">
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 text-amber-800"><AlertTriangle aria-hidden="true" /></div>
-        <div className="min-w-0">
-          <h2 id="finalize-dialog-title" className="text-lg font-semibold text-foreground">Finalize this invoice?</h2>
-          <p id="finalize-dialog-description" className="mt-2 text-sm leading-6 text-muted-foreground">Finalizing assigns a permanent invoice number. This action cannot be undone, and the invoice will be saved to your history.</p>
-        </div>
-      </div>
-      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" className="h-10" onClick={onClose}>Cancel</Button>
-        <Button type="button" className="h-10" autoFocus onClick={onConfirm}>Finalize invoice</Button>
-      </div>
     </section>
   </div>
 }

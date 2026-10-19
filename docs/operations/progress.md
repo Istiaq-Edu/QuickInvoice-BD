@@ -11,6 +11,15 @@
 - **Supabase test target:** none configured. There is no disposable beta or staging project, so do not assume one exists and do not apply migrations to a real project to "test" them. `npm test` applies the whole migration chain to a real Postgres running in-process (PGlite) and asserts the logo retention and draft-sanitiser behaviour there, which is the migration gate. The live RLS suite (`npm run test:supabase`) and the psql smoke test (`npm run test:supabase:sql`) only run when their own credentials are supplied explicitly, and they skip loudly otherwise.
 - **Important limitation:** the previous chat context is not available in this session. The task list below is reconstructed from the working tree, recent commits, the implementation plan, and the existing operational documentation.
 
+## Finalize-before-download removed (2026-10-19)
+
+- [x] Removed the requirement to finalize an invoice before PDF/DOCX export; signed-in drafts now download directly.
+- [x] Deleted `app/api/invoices/finalize/route.ts` together with the finalize button, confirmation dialog, handlers, and the `finalizing`/`savingDraft` state that only existed to drive it.
+- [x] History rows now offer Download PDF/DOCX for drafts as well as finalized invoices, and the draft settlement cell says "Not tracked" instead of "Not finalized".
+- [x] Kept the database finalization objects and the finalized-invoice update path, so existing numbered invoices, payments, settlement, snapshots, and logo retention continue to work unchanged.
+- [x] Removed the unused `InvoiceLifecycle` export from `lib/invoice/types.ts`.
+- [x] Verified: `tsc --noEmit`, ESLint on the changed files, 170 unit tests, and all 16 PGlite migration checks pass.
+
 ## Superseded logo lifecycle
 
 - [x] Replaced the upload's `content_hash` value, previously a `size:lastModified` pair that collided for two different files, with a SHA-256 of the uploaded bytes.

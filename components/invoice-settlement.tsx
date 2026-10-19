@@ -34,7 +34,7 @@ const statusLabels: Record<string, string> = {
 export function SettlementCell({ total, amountPaid, isDraft }: { total: number; amountPaid?: number | null; isDraft: boolean }) {
   // A draft has no settlement, but the cell still has to occupy the same slot and
   // align to the same right edge, or the row reads as broken.
-  if (isDraft) return <div className="text-right"><span className="text-xs text-muted-foreground">Not finalized</span></div>
+  if (isDraft) return <div className="text-right"><span className="text-xs text-muted-foreground">Not tracked</span></div>
 
   const settlement = calculateSettlement(total, amountPaid)
   const display = settlementDisplay(total, amountPaid)
