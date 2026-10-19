@@ -696,12 +696,18 @@ export default function Home() {
     observer.observe(content)
     measure()
     return () => observer.disconnect()
-  // The two column flags are dependencies as well as the page height: a toggle
-  // changes every row's height at once, and relying on the ResizeObserver alone
-  // means the spacers are solved a frame late — for that frame a row sits
-  // straddling a boundary that the next pass then moves, which is visible as the
-  // page count flickering.
-  }, [paperGeometry.pageHeightPx, keepSpacers, previewDiscountColumn, templateSettings.showQuantityColumn])
+  // Deliberately no dependency array: this runs after EVERY render.
+  //
+  // It used to depend on the page height and the two column flags, on the theory
+  // that the ResizeObserver would catch everything else. That stopped being true
+  // when the flow was padded to whole pages so the notes could sit on the bottom
+  // edge: once the paper is `min-height: pageCount * pageHeight`, adding a row no
+  // longer changes the element's border box, so the observer never fires and the
+  // spacers are solved against the layout before the row existed. The gate caught
+  // it as "Milestone 27" straddling the page boundary while the preview said 3
+  // pages. Measuring on every render is cheap — one rAF, a few dozen rect reads —
+  // and the setter bails when nothing moved, so it converges without a loop.
+  })
 
   // Measure the widest figure in each money column and publish it as a custom
   // property, so every row lays out on the same tracks.
@@ -1646,8 +1652,8 @@ export default function Home() {
                               <div className="mt-1 flex justify-between gap-4 border-t border-slate-200 pt-1 text-slate-900"><span>Balance carried forward</span><span className="font-semibold"><MoneyText text={formatMoney(carriedForward.amount)} /></span></div>
                             </div>
                           </div>}
-<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
-  <div className="pt-6 text-[10.5px] leading-[1.6] text-slate-500">
+<div className="py-4"><div data-keep-key="head" data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers.head ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-200 pb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400`}><span>Description</span>{templateSettings.showQuantityColumn && <span className="text-center">Qty</span>}<span className="text-right">Price</span>{previewDiscountColumn && <span className="text-right">Discount</span>}<span className="text-right">Amount</span></div>{lines.map((line) => { const amounts = getLineAmounts(line); return <div key={line.id} data-keep-key={line.id} data-qty={previewLineGridQty} data-discount={previewLineGridDiscount} style={{ marginTop: `${keepSpacers[line.id] ?? 0}px` }} className={`${previewLineGrid} border-b border-slate-100 py-3 text-[10px] sm:text-xs`}><span className="break-words text-slate-700">{line.description || "Item description"}</span>{templateSettings.showQuantityColumn && <span className="text-center text-slate-500">{line.quantity || 0}</span>}<span className="text-right text-slate-500"><MoneyText text={formatMoney(Number(line.unitPrice) || 0)} /></span>{previewDiscountColumn && <span className="text-right text-slate-500">{amounts.discountAmount > 0 ? <MoneyText text={`− ${formatMoney(amounts.discountAmount)}`} /> : "—"}</span>}<span className="text-right font-medium"><MoneyText text={formatMoney(amounts.amount)} /></span></div>})}</div><div data-keep-key="totals" style={{ marginTop: `${keepSpacers.totals ?? 0}px` }} className="ml-auto w-full max-w-[320px] space-y-3 border-t border-slate-200 pt-5 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span><MoneyText text={formatMoney(subtotal)} /></span></div>{discount > 0 && <div className="flex justify-between text-slate-500"><span>Total discount</span><span><MoneyText text={`− ${formatMoney(discount)}`} /></span></div>}<div className={`flex justify-between border-t-2 pt-3 text-lg font-bold ${accentStyle.total}`}><span>Total</span><span><MoneyText text={formatMoney(total)} /></span></div></div>{templateSettings.showNotes && notes && (
+  <div className="mt-auto pb-1 pt-6 text-[10.5px] leading-[1.6] text-slate-500">
     <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">Notes</p>
     {/* One keep-key PER LINE, not one for the block. A note can run to 10,000
         characters, and keeping that whole would either waste a page or — if it
@@ -1954,11 +1960,23 @@ export default function Home() {
                                 }}
                               >
                                 <div
-                                  className="invoice-page-content invoice-paper @container relative"
+                                  className="invoice-page-content invoice-paper @container relative flex flex-col"
                                   ref={previewRef}
                                   style={{
                                     width: contentBoxWidthPx(),
                                     transform: `translateY(${-previewPageIndex * paperGeometry.pageHeightPx}px)`,
+                                    // Pad the flow out to a WHOLE number of pages so the
+                                    // notes can sit on the bottom edge of the last one.
+                                    // Without it the flow ends wherever the last block
+                                    // ends, `mt-auto` has no free space to consume, and
+                                    // the notes float in the middle of the sheet. The
+                                    // value is derived from the geometry the paginator
+                                    // already reports, and padding only adds space AFTER
+                                    // the content, so the page count cannot oscillate:
+                                    // N * pageHeight re-measures as N pages.
+                                    minHeight: paperGeometry.pageHeightPx > 0
+                                      ? paperGeometry.pageCount * paperGeometry.pageHeightPx
+                                      : undefined,
                                   }}
                                 >
                                   {invoiceSheetContent}
